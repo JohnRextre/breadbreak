@@ -1,0 +1,201 @@
+<?php
+require_once __DIR__ . '/config/database.php';
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+if (isset($_GET['action']) && $_GET['action'] === 'create_account') {
+    try {
+        $pdo = getDatabaseConnection();
+        $adminCount = (int) $pdo->query("SELECT COUNT(*) FROM users WHERE role = 'admin' AND status = 'active'")->fetchColumn();
+
+        if ($adminCount === 0) {
+            header('Location: /BreadBreak/setup-admin.php');
+            exit;
+        }
+
+        header('Location: /BreadBreak/register.php');
+        exit;
+    } catch (Throwable $e) {
+        header('Location: /BreadBreak/setup-admin.php');
+        exit;
+    }
+}
+
+$pageTitle = 'Sign In | BreadBreak';
+$errors = [];
+$successMessage = '';
+$selectedAccountType = $_POST['account_type'] ?? '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $accountType = trim($_POST['account_type'] ?? '');
+    $identifier = trim($_POST['identifier'] ?? '');
+    $password = trim($_POST['password'] ?? '');
+
+    $allowedRoles = ['admin' => 'Admin', 'staff' => 'Staff', 'customer' => 'Customer'];
+
+    if ($accountType === '') {
+        $errors['account_type'] = 'Please select an account type.';
+    }
+
+    if ($identifier === '') {
+        $errors['identifier'] = 'Email or phone number is required.';
+    }
+
+    if ($password === '') {
+        $errors['password'] = 'Password is required.';
+    }
+
+    if (empty($errors)) {
+        try {
+            $pdo = getDatabaseConnection();
+            $roleKey = strtolower($accountType);
+
+            if (!isset($allowedRoles[$roleKey])) {
+                $errors['account_type'] = 'Invalid account type.';
+            } else {
+                $sql = 'SELECT * FROM users WHERE (email = :email_identifier OR phone = :phone_identifier) AND status = :status LIMIT 1';
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute([
+                    'email_identifier' => $identifier,
+                    'phone_identifier' => $identifier,
+                    'status' => 'active',
+                ]);
+
+                $user = $stmt->fetch();
+
+                if (!$user) {
+                    $errors['identifier'] = 'Wrong Email or Phone Number';
+                } else {
+                    if ($user['role'] !== $roleKey) {
+                        $errors['account_type'] = 'Incorrect Password or Account Type';
+                    }
+
+                    if (!password_verify($password, $user['password'])) {
+                        $errors['password'] = 'Incorrect Password or Account Type';
+                    }
+                }
+
+                if (!empty($errors['identifier']) && $password !== '') {
+                    $errors['password'] = 'Incorrect Password or Account Type';
+                }
+
+                if (empty($errors['identifier']) && empty($errors['account_type']) && empty($errors['password'])) {
+                    session_regenerate_id(true);
+                    $_SESSION['user_id'] = (int) $user['id'];
+                    $_SESSION['first_name'] = $user['first_name'];
+                    $_SESSION['last_name'] = $user['last_name'];
+                    $_SESSION['role'] = $user['role'];
+                    $_SESSION['email'] = $user['email'];
+
+                    if ($user['role'] === 'admin') {
+                        header('Location: /BreadBreak/admin/dashboard.php');
+                        exit;
+                    }
+
+                    if ($user['role'] === 'staff') {
+                        header('Location: /BreadBreak/staff/dashboard.php');
+                        exit;
+                    }
+
+                    header('Location: /BreadBreak/customer/index.php');
+                    exit;
+                }
+            }
+        } catch (Throwable $e) {
+            $errors['login'] = 'Database connection failed. Please start MySQL in XAMPP and try again.';
+        }
+    }
+}
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><?php echo htmlspecialchars($pageTitle); ?></title>
+    <meta name="description" content="BreadBreak account sign in page." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/BreadBreak/assets/css/auth.css" />
+    <script defer src="/BreadBreak/assets/js/auth.js"></script>
+</head>
+<body class="auth-body">
+    <div class="auth-page">
+        <div class="auth-shell">
+            <header class="auth-topbar">
+                <a href="/BreadBreak/index.php" class="brand" aria-label="BreadBreak home page">
+                    <span class="brand-mark">B</span>
+                    <span>
+                        <strong>BreadBreak</strong>
+                        <small>Bakery &amp; Online Ordering</small>
+                    </span>
+                </a>
+
+                <a href="/BreadBreak/index.php" class="back-home-link">← Back to Homepage</a>
+            </header>
+
+            <main class="auth-card login-card">
+                <div class="auth-heading">
+                    <span class="eyebrow text-accent">Welcome Back</span>
+                    <h1>Welcome Back</h1>
+                    <p>Sign in to continue to BreadBreak.</p>
+                </div>
+
+                <form class="auth-form" method="POST" novalidate data-form-type="login">
+                    <div class="field-group">
+                        <label for="account_type">Select Account Type</label>
+                        <div class="custom-select-wrap">
+                            <select id="account_type" name="account_type" class="custom-select<?php echo isset($errors['account_type']) ? ' error-field' : ''; ?>" aria-invalid="<?php echo isset($errors['account_type']) ? 'true' : 'false'; ?>">
+                                <option value="" <?php echo $selectedAccountType === '' ? 'selected' : ''; ?>>Select account type</option>
+                                <option value="Admin" <?php echo $selectedAccountType === 'Admin' ? 'selected' : ''; ?>>Admin</option>
+                                <option value="Staff" <?php echo $selectedAccountType === 'Staff' ? 'selected' : ''; ?>>Staff</option>
+                                <option value="Customer" <?php echo $selectedAccountType === 'Customer' ? 'selected' : ''; ?>>Customer</option>
+                            </select>
+                        </div>
+                        <div class="error-message" data-error-for="account_type"><?php echo isset($errors['account_type']) ? htmlspecialchars($errors['account_type']) : ''; ?></div>
+                    </div>
+
+                    <div class="field-group">
+                        <label for="identifier">Email or Phone Number</label>
+                        <div class="input-wrap">
+                            <span class="input-icon" aria-hidden="true">✉</span>
+                            <input id="identifier" name="identifier" type="text" placeholder="Enter your email or phone number" value="<?php echo isset($_POST['identifier']) ? htmlspecialchars($_POST['identifier']) : ''; ?>" class="<?php echo isset($errors['identifier']) ? 'error-field' : ''; ?>" aria-invalid="<?php echo isset($errors['identifier']) ? 'true' : 'false'; ?>" />
+                        </div>
+                        <div class="error-message" data-error-for="identifier"><?php echo isset($errors['identifier']) ? htmlspecialchars($errors['identifier']) : ''; ?></div>
+                    </div>
+
+                    <div class="field-group">
+                        <label for="password">Password</label>
+                        <div class="input-wrap password-wrap">
+                            <span class="input-icon" aria-hidden="true">🔒</span>
+                            <input id="password" name="password" type="password" placeholder="Enter your password" value="<?php echo isset($_POST['password']) ? htmlspecialchars($_POST['password']) : ''; ?>" class="<?php echo isset($errors['password']) ? 'error-field' : ''; ?>" aria-invalid="<?php echo isset($errors['password']) ? 'true' : 'false'; ?>" />
+                            <button type="button" class="toggle-password" data-target="password" aria-label="Show password">👁</button>
+                        </div>
+                        <div class="error-message" data-error-for="password"><?php echo isset($errors['password']) ? htmlspecialchars($errors['password']) : ''; ?></div>
+                    </div>
+
+                    <div class="form-row between">
+                        <div class="checkbox-wrap">
+                            <input type="checkbox" id="remember" />
+                            <label for="remember">Remember me</label>
+                        </div>
+                        <a href="/BreadBreak/forgot-password.php" class="inline-link">Forgot Password?</a>
+                    </div>
+
+                    <button type="submit" class="auth-btn primary-btn">Sign In</button>
+
+                </form>
+
+                <div class="auth-footer">
+                    <p>Don't have an account?</p>
+                    <a href="/BreadBreak/login.php?action=create_account" class="auth-link">Create an account</a>
+                </div>
+            </main>
+        </div>
+    </div>
+</body>
+</html>
