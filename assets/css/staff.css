@@ -1,0 +1,49 @@
+body.staff-body { --admin-brown: #7b523b; }
+.staff-body .sidebar-logo small { color: #9a6a4d; }
+.staff-body .topbar-kicker { color: #9a6a4d; }
+.inventory-page-intro { align-items: flex-end; }
+.inventory-page-intro h2 { font-size: 30px; }
+.menu-panel { margin-bottom: 22px; }
+.menu-panel .panel-heading { margin-bottom: 14px; }
+.menu-description { margin: -8px 0 18px; color: var(--admin-muted); font-size: 13px; }
+.category-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.category-card { position: relative; display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding: 10px 12px; border: 1px solid var(--admin-line); border-radius: 8px; color: var(--admin-brown-dark); background: #fffdfb; font-size: 12px; font-weight: 700; text-align: left; cursor: pointer; }
+.category-card > a { flex: 1; color: inherit; text-decoration: none; }
+.category-card:hover, .category-card.active { border-color: #c99d83; background: #f8eee8; }
+.category-card .category-actions { margin-left: 5px; border: 0; color: var(--admin-muted); background: transparent; font-size: 17px; cursor: pointer; }
+.menu-add-row { display: flex; justify-content: flex-end; margin-top: 15px; }
+.variant-section-title { margin: 4px 0 0; color: var(--admin-ink); font-family: 'Manrope', sans-serif; font-size: 15px; }
+.variant-list { display: grid; gap: 12px; }
+.variant-card { padding: 16px; border: 1px solid var(--admin-line); border-radius: 9px; background: #fcfaf8; }
+.variant-card-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; color: var(--admin-brown-dark); font-size: 13px; }
+.variant-remove { border: 0; color: #a34f43; background: transparent; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.variant-stock { margin-top: 12px; color: var(--admin-muted); font-size: 12px; }
+.variant-stock strong { margin-left: 4px; }
+.variant-stock .stock-in { color: var(--admin-green); }
+.variant-stock .stock-low { color: var(--admin-orange); }
+.variant-stock .stock-out { color: #a34f43; }
+.add-variant { justify-self: start; }
+.variant-detail-table { margin-top: 10px; }
+.inventory-controls { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 18px; }
+.inventory-controls .search-control { flex: 1; }
+.inventory-table th:last-child, .inventory-table td:last-child { width: 48px; text-align: center; }
+.stock-badge, .availability-badge { display: inline-block; padding: 5px 9px; border-radius: 20px; font-size: 10px; font-weight: 700; }
+.stock-in { color: var(--admin-green); background: #eef8f1; }
+.stock-low { color: var(--admin-orange); background: #fff5e6; }
+.stock-out { color: #a34f43; background: #fbeceb; }
+.availability-badge { color: #356d91; background: #eaf4f9; }
+.availability-badge.unavailable { color: #a34f43; background: #fbeceb; }
+.photo-field { display: grid; gap: 7px; }
+.photo-drop { display: grid; place-items: center; min-height: 92px; padding: 12px; border: 1px dashed #cfc1b8; border-radius: 8px; color: var(--admin-muted); background: #fcfaf8; text-align: center; cursor: pointer; }
+.photo-drop strong, .photo-drop small { display: block; }
+.photo-drop strong { color: var(--admin-brown); font-size: 13px; }
+.photo-drop small { margin-top: 5px; font-size: 10px; }
+.photo-filename { color: var(--admin-brown-dark); font-size: 11px; }
+.item-detail-grid { display: grid; grid-template-columns: 110px 1fr; gap: 20px; }
+.item-photo-placeholder { display: grid; place-items: center; min-height: 110px; border-radius: 8px; color: var(--admin-muted); background: #f5f0eb; font-size: 11px; text-align: center; }
+.item-detail-list { display: grid; gap: 8px; margin: 0; font-size: 13px; }
+.item-detail-list div { display: flex; justify-content: space-between; gap: 15px; border-bottom: 1px solid #f0ece8; padding-bottom: 7px; }
+.item-detail-list dt { color: var(--admin-muted); }
+.item-detail-list dd { margin: 0; color: var(--admin-ink); font-weight: 600; text-align: right; }
+@media (max-width: 900px) { .category-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 470px) { .inventory-page-intro { align-items: stretch; } .inventory-controls { align-items: stretch; flex-direction: column; } .category-grid { grid-template-columns: 1fr; } .item-detail-grid { grid-template-columns: 1fr; } }

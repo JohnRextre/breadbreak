@@ -1,31 +1,11 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
 requireRole('staff');
+$pageTitle = 'Dashboard';
+$activePage = 'dashboard';
+require __DIR__ . '/../includes/staff_header.php';
 ?>
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Staff Dashboard | BreadBreak</title>
-    <link rel="stylesheet" href="/BreadBreak/assets/css/auth.css" />
-</head>
-<body class="auth-body">
-    <div class="auth-page">
-        <div class="auth-shell">
-            <main class="auth-card">
-                <div class="auth-heading">
-                    <span class="eyebrow text-accent">Staff Portal</span>
-                    <h1>Welcome, <?php echo htmlspecialchars($_SESSION['first_name'] ?? 'Staff'); ?></h1>
-                    <p>Account Type: Staff</p>
-                </div>
-                <div class="form-status success">Staff dashboard placeholder.</div>
-                <div class="form-actions-inline" style="text-align: center; margin-top: 1rem;">
-                    <a href="/BreadBreak/logout.php" class="auth-link">Logout</a>
-                </div>
-            </main>
-        </div>
-    </div>
-</body>
-</html>
+<section class="access-card"><div class="access-icon">i</div><div><h2>Staff Operations</h2><p>Manage BreadBreak products, menu categories, and stock levels.</p></div></section>
+<section class="welcome-block"><h2>Welcome back, <?php echo htmlspecialchars($_SESSION['first_name'] ?? 'Staff'); ?>!</h2><p>Keep the bakery inventory accurate and ready for customers.</p></section>
+<section class="panel quick-access"><div class="panel-heading"><h3>Quick Access</h3></div><div class="quick-links"><a class="quick-link" href="<?php echo BASE_URL; ?>/staff/inventory.php">Manage Inventory</a><a class="quick-link" href="<?php echo BASE_URL; ?>/staff/orders.php">View Orders</a><a class="quick-link" href="<?php echo BASE_URL; ?>/staff/reports.php">View Reports</a><a class="quick-link" href="<?php echo BASE_URL; ?>/staff/profile.php">My Profile</a></div></section>
+<?php require __DIR__ . '/../includes/staff_footer.php'; ?>

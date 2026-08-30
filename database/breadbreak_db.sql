@@ -13,3 +13,39 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS menu_categories (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(120) NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS inventory_items (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(150) NOT NULL,
+    category_id INT NOT NULL,
+    description TEXT NOT NULL,
+    photo VARCHAR(255) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_inventory_category FOREIGN KEY (category_id) REFERENCES menu_categories(id) ON UPDATE CASCADE ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS inventory_item_variants (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    inventory_item_id INT NOT NULL,
+    service_size ENUM('Solo', 'Partner', 'Family') NOT NULL,
+    sku VARCHAR(80) NOT NULL UNIQUE,
+    price DECIMAL(10,2) NOT NULL,
+    quantity INT NOT NULL DEFAULT 0,
+    availability ENUM('available', 'unavailable') NOT NULL DEFAULT 'available',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_variant_item FOREIGN KEY (inventory_item_id) REFERENCES inventory_items(id) ON UPDATE CASCADE ON DELETE CASCADE,
+    UNIQUE KEY unique_item_service_size (inventory_item_id, service_size)
+);
+
+INSERT IGNORE INTO menu_categories (name) VALUES
+    ('Bite-sized Breads'), ('Big Breads'), ('Palm-sized Cookies'), ('Cookies'),
+    ('Pastries'), ('Crinkles'), ('Decadent Cakes'), ('Round Cakes');
