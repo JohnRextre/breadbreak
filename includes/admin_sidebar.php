@@ -35,20 +35,21 @@ $icons = [
             <span><strong>BreadBreak</strong><small>ADMIN PANEL</small></span>
         </a>
         <button class="sidebar-close" type="button" aria-label="Close navigation">&times;</button>
+        <button class="sidebar-collapse" type="button" aria-label="Collapse sidebar" aria-expanded="true"><span class="collapse-icon">&laquo;</span></button>
     </div>
     <nav class="sidebar-nav" aria-label="Admin navigation">
         <?php foreach ($navigation as $section => $items): ?>
             <div class="nav-section">
                 <span class="nav-label"><?php echo strtoupper($section); ?></span>
                 <?php foreach ($items as [$page, $label, $icon]): ?>
-                    <a class="sidebar-link <?php echo $activePage === $page ? 'active' : ''; ?>" href="<?php echo BASE_URL; ?>/admin/<?php echo $page; ?>.php">
+                    <a class="sidebar-link <?php echo $activePage === $page ? 'active' : ''; ?>" href="<?php echo BASE_URL; ?>/admin/<?php echo $page; ?>.php" title="<?php echo htmlspecialchars($label); ?>">
                         <?php echo $icons[$icon]; ?><span><?php echo htmlspecialchars($label); ?></span>
                     </a>
                 <?php endforeach; ?>
             </div>
         <?php endforeach; ?>
         <div class="nav-section nav-account-last">
-            <a class="sidebar-link" href="<?php echo BASE_URL; ?>/logout.php">
+            <a class="sidebar-link" href="<?php echo BASE_URL; ?>/logout.php" title="Logout">
                 <?php echo $icons['logout']; ?><span>Logout</span>
             </a>
         </div>
