@@ -9,7 +9,7 @@
                 <h4>Quick Links</h4>
                 <ul class="footer-links">
                     <li><a href="/BreadBreak/index.php">Home</a></li>
-                    <li><a href="/BreadBreak/shop.php">Shop</a></li>
+                    <li><a href="/BreadBreak/menu.php">Shop</a></li>
                     <li><a href="/BreadBreak/about.php">About Us</a></li>
                     <li><a href="/BreadBreak/contact.php">Contact</a></li>
                 </ul>
@@ -18,17 +18,18 @@
             <div>
                 <h4>Contact</h4>
                 <ul class="footer-links contact-list">
-                    <li>Location: Guiguinto, Bulacan</li>
+                    <li>Location: Estrella Village, Guiguinto, Bulacan</li>
                     <li>Email: breadbreak@example.com</li>
-                    <li>Phone: +63 XXX XXX XXXX</li>
+                    <li>Phone: +63 933 918 0174</li>
                 </ul>
             </div>
 
             <div>
                 <h4>Follow Us</h4>
                 <div class="social-links">
-                    <a href="#" aria-label="Facebook">Facebook</a>
-                    <a href="#" aria-label="Instagram">Instagram</a>
+                    <a href="https://www.facebook.com/profile.php?id=100066227186528" aria-label="Facebook">Facebook</a>
+                    <a href="https://www.instagram.com/breadbreakph/" aria-label="Instagram">Instagram</a>
+                    <a href="https://www.tiktok.com/@breadbreakph" aria-label="TikTok">TikTok</a>
                 </div>
             </div>
         </div>

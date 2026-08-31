@@ -318,6 +318,20 @@ p {
     border-radius: 999px;
 }
 
+.product-image-hero {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 24px;
+}
+
+.product-image-about {
+    width: 100%;
+    height: auto;
+    border-radius: 16px;
+    box-shadow: var(--shadow-soft);
+}
+
 .product-illustration {
     width: 90%;
     height: 310px;
