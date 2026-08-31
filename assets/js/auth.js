@@ -12,7 +12,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
             const isPassword = input.type === 'password';
             input.type = isPassword ? 'text' : 'password';
-            this.textContent = isPassword ? '🙈' : '👁';
+            
+            const icon = this.querySelector('i');
+            if (icon) {
+                icon.className = isPassword ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
+            }
             this.setAttribute('aria-label', isPassword ? 'Hide password' : 'Show password');
         });
     });

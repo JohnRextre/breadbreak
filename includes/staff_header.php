@@ -16,9 +16,9 @@ $staffInitial = strtoupper(substr($staffName, 0, 1));
     <meta name="description" content="BreadBreak staff portal." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="<?php echo BASE_URL; ?>/assets/css/admin.css" />
-    <link rel="stylesheet" href="<?php echo BASE_URL; ?>/assets/css/staff.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link rel="stylesheet" href="<?php echo BASE_URL; ?>/assets/css/admin.css?v=<?php echo file_exists(__DIR__ . '/../assets/css/admin.css') ? filemtime(__DIR__ . '/../assets/css/admin.css') : time(); ?>" />
+    <link rel="stylesheet" href="<?php echo BASE_URL; ?>/assets/css/staff.css?v=<?php echo file_exists(__DIR__ . '/../assets/css/staff.css') ? filemtime(__DIR__ . '/../assets/css/staff.css') : time(); ?>" />
 </head>
 <body class="admin-body staff-body">
     <div class="admin-app">

@@ -100,22 +100,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$adminConfigured) {
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/BreadBreak/assets/css/auth.css" />
-    <script defer src="/BreadBreak/assets/js/auth.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link rel="stylesheet" href="/BreadBreak/assets/css/auth.css?v=<?php echo file_exists(__DIR__ . '/assets/css/auth.css') ? filemtime(__DIR__ . '/assets/css/auth.css') : time(); ?>" />
+    <script defer src="/BreadBreak/assets/js/auth.js?v=<?php echo file_exists(__DIR__ . '/assets/js/auth.js') ? filemtime(__DIR__ . '/assets/js/auth.js') : time(); ?>"></script>
 </head>
 <body class="auth-body">
     <div class="auth-page">
         <div class="auth-shell wide-shell">
             <header class="auth-topbar">
                 <a href="/BreadBreak/index.php" class="brand" aria-label="BreadBreak home page">
-                    <span class="brand-mark">B</span>
+                    <img src="/BreadBreak/assets/breadbreak_png/breadbreak_logo.png" alt="BreadBreak logo" class="brand-logo" width="48" height="48" />
                     <span>
                         <strong>BreadBreak</strong>
                         <small>Bakery &amp; Online Ordering</small>
                     </span>
                 </a>
 
-                <a href="/BreadBreak/index.php" class="back-home-link">← Back to Homepage</a>
+                <a href="/BreadBreak/index.php" class="back-home-link"><i class="fa-solid fa-arrow-left"></i> Back to Homepage</a>
             </header>
 
             <main class="auth-card register-card">
@@ -126,8 +127,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$adminConfigured) {
                         <p>An Administrator account has already been created for this BreadBreak system. New users can now register as Customers.</p>
                     </div>
                     <div class="form-actions-inline" style="margin-top: 1rem; text-align: center; display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
-                        <a href="/BreadBreak/login.php" class="auth-btn primary-btn">Go to Sign In</a>
-                        <a href="/BreadBreak/register.php" class="auth-btn primary-btn" style="background: linear-gradient(135deg, #5b4033, #8d5a3b);">Customer Registration</a>
+                        <a href="/BreadBreak/login.php" class="auth-btn primary-btn"><i class="fa-solid fa-right-to-bracket"></i> Go to Sign In</a>
+                        <a href="/BreadBreak/register.php" class="auth-btn primary-btn" style="background: linear-gradient(135deg, #5b4033, #8d5a3b);"><i class="fa-solid fa-user-plus"></i> Customer Registration</a>
                     </div>
                 <?php else: ?>
                     <div class="auth-heading">
@@ -166,9 +167,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$adminConfigured) {
                         <div class="field-group">
                             <label for="password">Password</label>
                             <div class="input-wrap password-wrap">
-                                <span class="input-icon" aria-hidden="true">🔒</span>
+                                <span class="input-icon" aria-hidden="true"><i class="fa-solid fa-lock"></i></span>
                                 <input id="password" name="password" type="password" placeholder="Create a password" aria-invalid="false" />
-                                <button type="button" class="toggle-password" data-target="password" aria-label="Show password">👁</button>
+                                <button type="button" class="toggle-password" data-target="password" aria-label="Show password"><i class="fa-solid fa-eye"></i></button>
                             </div>
                             <div class="error-message" data-error-for="password"><?php echo isset($errors['password']) ? htmlspecialchars($errors['password']) : ''; ?></div>
                             <div class="password-strength" aria-live="polite">Password strength: <span id="strengthText">-</span></div>
@@ -177,9 +178,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$adminConfigured) {
                         <div class="field-group">
                             <label for="confirm_password">Confirm Password</label>
                             <div class="input-wrap password-wrap">
-                                <span class="input-icon" aria-hidden="true">🔒</span>
+                                <span class="input-icon" aria-hidden="true"><i class="fa-solid fa-lock"></i></span>
                                 <input id="confirm_password" name="confirm_password" type="password" placeholder="Confirm your password" aria-invalid="false" />
-                                <button type="button" class="toggle-password" data-target="confirm_password" aria-label="Show password">👁</button>
+                                <button type="button" class="toggle-password" data-target="confirm_password" aria-label="Show password"><i class="fa-solid fa-eye"></i></button>
                             </div>
                             <div class="error-message" data-error-for="confirm_password"><?php echo isset($errors['confirm_password']) ? htmlspecialchars($errors['confirm_password']) : ''; ?></div>
                         </div>
@@ -189,7 +190,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$adminConfigured) {
                                 <strong><?php echo htmlspecialchars($successMessage); ?></strong>
                                 <div style="margin-top: 0.75rem;">Your BreadBreak Administrator account has been created successfully. You can now sign in.</div>
                                 <div class="form-actions-inline">
-                                    <a href="/BreadBreak/login.php" class="auth-link inline">Go to Sign In</a>
+                                    <a href="/BreadBreak/login.php" class="auth-link inline"><i class="fa-solid fa-right-to-bracket"></i> Go to Sign In</a>
                                 </div>
                             </div>
                         <?php endif; ?>
@@ -200,9 +201,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$adminConfigured) {
                             </div>
                         <?php endif; ?>
 
-                        <button type="submit" class="auth-btn primary-btn">Create Administrator Account</button>
+                        <button type="submit" class="auth-btn primary-btn"><i class="fa-solid fa-user-shield"></i> Create Administrator Account</button>
                         <div class="form-actions-inline" style="text-align: center; margin-top: 0.75rem;">
-                            <a href="/BreadBreak/login.php" class="auth-link">Back to Sign In</a>
+                            <a href="/BreadBreak/login.php" class="auth-link"><i class="fa-solid fa-arrow-left"></i> Back to Sign In</a>
                         </div>
                     </form>
                 <?php endif; ?>

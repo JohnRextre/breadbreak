@@ -108,6 +108,16 @@ button {
     letter-spacing: 0.02em;
 }
 
+.brand-logo {
+    width: 48px;
+    height: 48px;
+    max-width: 48px;
+    max-height: 48px;
+    object-fit: contain;
+    display: block;
+    flex-shrink: 0;
+}
+
 .back-home-link {
     color: var(--auth-brown-700);
     font-weight: 700;
@@ -212,11 +222,17 @@ select:focus {
 
 .input-icon {
     position: absolute;
-    left: 1rem;
+    left: 1.1rem;
     top: 50%;
     transform: translateY(-50%);
-    font-size: 1.05rem;
-    opacity: 0.75;
+    font-size: 1rem;
+    color: var(--auth-brown-500);
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
 }
 
 .toggle-password {
@@ -226,9 +242,18 @@ select:focus {
     transform: translateY(-50%);
     border: none;
     background: transparent;
-    color: var(--auth-brown-700);
-    font-size: 1.1rem;
-    padding: 0.1rem 0.4rem;
+    color: var(--auth-muted);
+    font-size: 1rem;
+    padding: 0.4rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+
+.toggle-password:hover {
+    color: var(--auth-accent);
 }
 
 .custom-select-wrap {
@@ -236,14 +261,16 @@ select:focus {
 }
 
 .custom-select-wrap::after {
-    content: '▾';
+    content: '\f078';
+    font-family: 'Font Awesome 6 Free';
+    font-weight: 900;
     position: absolute;
-    right: 1rem;
+    right: 1.1rem;
     top: 50%;
     transform: translateY(-50%);
     color: var(--auth-brown-700);
     pointer-events: none;
-    font-size: 1.1rem;
+    font-size: 0.75rem;
 }
 
 .custom-select {

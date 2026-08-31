@@ -26,22 +26,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/BreadBreak/assets/css/auth.css" />
-    <script defer src="/BreadBreak/assets/js/auth.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link rel="stylesheet" href="/BreadBreak/assets/css/auth.css?v=<?php echo file_exists(__DIR__ . '/assets/css/auth.css') ? filemtime(__DIR__ . '/assets/css/auth.css') : time(); ?>" />
+    <script defer src="/BreadBreak/assets/js/auth.js?v=<?php echo file_exists(__DIR__ . '/assets/js/auth.js') ? filemtime(__DIR__ . '/assets/js/auth.js') : time(); ?>"></script>
 </head>
 <body class="auth-body">
     <div class="auth-page">
         <div class="auth-shell">
             <header class="auth-topbar">
                 <a href="/BreadBreak/index.php" class="brand" aria-label="BreadBreak home page">
-                    <span class="brand-mark">B</span>
+                    <img src="/BreadBreak/assets/breadbreak_png/breadbreak_logo.png" alt="BreadBreak logo" class="brand-logo" width="48" height="48" />
                     <span>
                         <strong>BreadBreak</strong>
                         <small>Bakery &amp; Online Ordering</small>
                     </span>
                 </a>
 
-                <a href="/BreadBreak/index.php" class="back-home-link">← Back to Homepage</a>
+                <a href="/BreadBreak/index.php" class="back-home-link"><i class="fa-solid fa-arrow-left"></i> Back to Homepage</a>
             </header>
 
             <main class="auth-card reset-card">
@@ -55,13 +56,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="field-group">
                         <label for="identifier">Email or Phone Number</label>
                         <div class="input-wrap">
-                            <span class="input-icon" aria-hidden="true">✉</span>
+                            <span class="input-icon" aria-hidden="true"><i class="fa-solid fa-envelope"></i></span>
                             <input id="identifier" name="identifier" type="text" placeholder="Enter your email or phone number" value="<?php echo isset($_POST['identifier']) ? htmlspecialchars($_POST['identifier']) : ''; ?>" aria-invalid="false" />
                         </div>
                         <div class="error-message" data-error-for="identifier"><?php echo isset($errors['identifier']) ? htmlspecialchars($errors['identifier']) : ''; ?></div>
                     </div>
 
-                    <button type="submit" class="auth-btn primary-btn">Continue</button>
+                    <button type="submit" class="auth-btn primary-btn"><i class="fa-solid fa-arrow-right"></i> Continue</button>
 
                     <?php if (!empty($successMessage)): ?>
                         <div class="form-status success" aria-live="polite">
@@ -71,7 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </form>
 
                 <div class="auth-footer condensed">
-                    <a href="/BreadBreak/login.php" class="auth-link">← Back to Sign In</a>
+                    <a href="/BreadBreak/login.php" class="auth-link"><i class="fa-solid fa-arrow-left"></i> Back to Sign In</a>
                 </div>
             </main>
         </div>

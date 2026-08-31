@@ -1,3 +1,13 @@
+<?php
+$currentPage = basename($_SERVER['PHP_SELF']);
+$navItems = [
+    ['label' => 'Home', 'href' => '/BreadBreak/index.php', 'page' => 'index.php'],
+    ['label' => 'Shop', 'href' => '/BreadBreak/menu.php', 'page' => 'menu.php'],
+    ['label' => 'About Us', 'href' => '/BreadBreak/about.php', 'page' => 'about.php'],
+    ['label' => 'Contact', 'href' => '/BreadBreak/contact.php', 'page' => 'contact.php'],
+];
+?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9,15 +19,15 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-    <link rel="stylesheet" href="/BreadBreak/assets/css/style.css" />
-    <script defer src="/BreadBreak/assets/js/script.js"></script>
+    <link rel="stylesheet" href="/BreadBreak/assets/css/style.css?v=<?php echo file_exists(__DIR__ . '/../assets/css/style.css') ? filemtime(__DIR__ . '/../assets/css/style.css') : time(); ?>" />
+    <script defer src="/BreadBreak/assets/js/script.js?v=<?php echo file_exists(__DIR__ . '/../assets/js/script.js') ? filemtime(__DIR__ . '/../assets/js/script.js') : time(); ?>"></script>
 </head>
 <body>
     <header class="site-header">
         <div class="container navbar">
             <div class="brand-wrap">
                 <a href="/BreadBreak/index.php" class="brand" aria-label="BreadBreak home page">
-                    <span class="brand-mark">B</span>
+                    <img src="/BreadBreak/assets/breadbreak_png/breadbreak_logo.png" alt="BreadBreak logo" class="brand-logo" width="60" height="60" />
                     <span>
                         <strong>BreadBreak</strong>
                         <small>Bakery &amp; Online Ordering</small>
@@ -26,10 +36,9 @@
             </div>
 
             <nav class="main-nav" aria-label="Main navigation">
-                <a href="/BreadBreak/index.php" class="nav-link active">Home</a>
-                <a href="/BreadBreak/menu.php" class="nav-link">Shop</a>
-                <a href="/BreadBreak/about.php" class="nav-link">About Us</a>
-                <a href="/BreadBreak/contact.php" class="nav-link">Contact</a>
+                <?php foreach ($navItems as $item): ?>
+                    <a href="<?php echo $item['href']; ?>" class="nav-link<?php echo $currentPage === $item['page'] ? ' active' : ''; ?>"><?php echo $item['label']; ?></a>
+                <?php endforeach; ?>
             </nav>
 
             <div class="header-tools">

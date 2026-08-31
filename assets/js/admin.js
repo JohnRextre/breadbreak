@@ -12,15 +12,33 @@ document.addEventListener('DOMContentLoaded', function () {
         if (sidebarCollapse) {
             sidebarCollapse.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
             sidebarCollapse.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-            sidebarCollapse.querySelector('.collapse-icon').textContent = collapsed ? '»' : '«';
+            const icon = sidebarCollapse.querySelector('.collapse-icon');
+            if (icon) {
+                if (collapsed) {
+                    icon.classList.remove('fa-angles-left');
+                    icon.classList.add('fa-angles-right');
+                } else {
+                    icon.classList.remove('fa-angles-right');
+                    icon.classList.add('fa-angles-left');
+                }
+            }
         }
-        window.localStorage.setItem(sidebarPreferenceKey, collapsed ? 'collapsed' : 'expanded');
+        try {
+            window.localStorage.setItem(sidebarPreferenceKey, collapsed ? 'collapsed' : 'expanded');
+        } catch (e) {}
     };
 
-    if (window.localStorage.getItem(sidebarPreferenceKey) === 'collapsed') setSidebarCollapsed(true);
-    if (sidebarCollapse) sidebarCollapse.addEventListener('click', function () {
-        setSidebarCollapsed(!body.classList.contains('sidebar-collapsed'));
-    });
+    if (window.localStorage.getItem(sidebarPreferenceKey) === 'collapsed') {
+        setSidebarCollapsed(true);
+    }
+    
+    if (sidebarCollapse) {
+        sidebarCollapse.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            setSidebarCollapsed(!body.classList.contains('sidebar-collapsed'));
+        });
+    }
 
     const setSidebar = function (open) {
         body.classList.toggle('sidebar-open', open);
@@ -29,12 +47,32 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     };
 
-    if (menuToggle) menuToggle.addEventListener('click', function () { setSidebar(true); });
-    if (sidebarClose) sidebarClose.addEventListener('click', function () { setSidebar(false); });
-    if (overlay) overlay.addEventListener('click', function () { setSidebar(false); });
+    if (menuToggle) {
+        menuToggle.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            setSidebar(!body.classList.contains('sidebar-open'));
+        });
+    }
+    if (sidebarClose) {
+        sidebarClose.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            setSidebar(false);
+        });
+    }
+    if (overlay) {
+        overlay.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            setSidebar(false);
+        });
+    }
     if (sidebar) {
         sidebar.querySelectorAll('a').forEach(function (link) {
-            link.addEventListener('click', function () { setSidebar(false); });
+            link.addEventListener('click', function () {
+                setSidebar(false);
+            });
         });
     }
 
@@ -115,11 +153,24 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     document.querySelectorAll('[data-toggle-password]').forEach(function (button) {
-        button.addEventListener('click', function () {
+        button.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
             const input = document.getElementById(button.dataset.togglePassword);
             if (!input) return;
-            input.type = input.type === 'password' ? 'text' : 'password';
-            button.setAttribute('aria-label', input.type === 'password' ? 'Show password' : 'Hide password');
+            const isCurrentlyPassword = input.type === 'password';
+            input.type = isCurrentlyPassword ? 'text' : 'password';
+            const icon = button.querySelector('i');
+            if (icon) {
+                if (isCurrentlyPassword) {
+                    icon.classList.remove('fa-eye');
+                    icon.classList.add('fa-eye-slash');
+                } else {
+                    icon.classList.remove('fa-eye-slash');
+                    icon.classList.add('fa-eye');
+                }
+            }
+            button.setAttribute('aria-label', isCurrentlyPassword ? 'Hide password' : 'Show password');
         });
     });
 
