@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS users (
     phone VARCHAR(30) NOT NULL,
     email VARCHAR(150) NOT NULL UNIQUE,
     password VARCHAR(255) NOT NULL,
+    profile_data MEDIUMBLOB NULL,
+    profile_mime VARCHAR(50) NULL,
     role ENUM('admin', 'staff', 'customer') NOT NULL,
     status ENUM('active', 'inactive') DEFAULT 'active',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -27,6 +29,8 @@ CREATE TABLE IF NOT EXISTS inventory_items (
     category_id INT NOT NULL,
     description TEXT NOT NULL,
     photo VARCHAR(255) NULL,
+    photo_data MEDIUMBLOB NULL,
+    photo_mime VARCHAR(50) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_inventory_category FOREIGN KEY (category_id) REFERENCES menu_categories(id) ON UPDATE CASCADE ON DELETE RESTRICT

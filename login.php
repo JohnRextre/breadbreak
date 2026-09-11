@@ -85,7 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         exit;
                     }
 
-                    header('Location: /BreadBreak/customer/index.php');
+                    header('Location: /BreadBreak/customer/menu_dashboard.php');
                     exit;
                 }
             }

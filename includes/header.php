@@ -1,5 +1,8 @@
 <?php
+if (session_status() === PHP_SESSION_NONE) session_start();
 $currentPage = basename($_SERVER['PHP_SELF']);
+$headerCartCount = isset($_SESSION['cart']) && is_array($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
+$isCustomerHeader = ($_SESSION['role'] ?? '') === 'customer';
 $navItems = [
     ['label' => 'Home', 'href' => '/BreadBreak/index.php', 'page' => 'index.php'],
     ['label' => 'Shop', 'href' => '/BreadBreak/menu.php', 'page' => 'menu.php'],
@@ -26,7 +29,7 @@ $navItems = [
     <header class="site-header">
         <div class="container navbar">
             <div class="brand-wrap">
-                <a href="/BreadBreak/index.php" class="brand" aria-label="BreadBreak home page">
+                <a href="<?php echo $isCustomerHeader ? '/BreadBreak/customer/menu_dashboard.php' : '/BreadBreak/index.php'; ?>" class="brand" aria-label="BreadBreak <?php echo $isCustomerHeader ? 'customer dashboard' : 'home page'; ?>">
                     <img src="/BreadBreak/assets/breadbreak_png/breadbreak_logo.png" alt="BreadBreak logo" class="brand-logo" width="60" height="60" />
                     <span>
                         <strong>BreadBreak</strong>
@@ -35,17 +38,18 @@ $navItems = [
                 </a>
             </div>
 
-            <nav class="main-nav" aria-label="Main navigation">
+            <?php if (!$isCustomerHeader): ?><nav class="main-nav" aria-label="Main navigation">
                 <?php foreach ($navItems as $item): ?>
                     <a href="<?php echo $item['href']; ?>" class="nav-link<?php echo $currentPage === $item['page'] ? ' active' : ''; ?>"><?php echo $item['label']; ?></a>
                 <?php endforeach; ?>
-            </nav>
+            </nav><?php endif; ?>
 
             <div class="header-tools">
-                <a href="/BreadBreak/login.php" class="btn btn-outline">
-                    <i class="fa-solid fa-right-to-bracket"></i>
-                    Login
+                <?php if ($isCustomerHeader): ?><a href="#" class="customer-header-icon is-disabled" aria-label="Delivery tracking coming soon" title="Delivery tracking coming soon" aria-disabled="true"><i class="fa-solid fa-truck"></i></a><a href="/BreadBreak/customer/account.php" class="customer-profile-button" aria-label="Open My Account" title="My Account"><i class="fa-solid fa-user"></i></a><?php endif; ?>
+                <a href="/BreadBreak/cart.php" class="cart-button" aria-label="Shopping cart" title="Shopping cart">
+                    <i class="fa-solid fa-cart-shopping"></i><span class="cart-count" data-cart-count><?php echo (int) $headerCartCount; ?></span>
                 </a>
+                <?php if ($isCustomerHeader): ?><a href="/BreadBreak/logout.php" class="btn btn-outline"><i class="fa-solid fa-right-from-bracket"></i> Logout</a><?php else: ?><a href="/BreadBreak/login.php" class="btn btn-outline"><i class="fa-solid fa-right-to-bracket"></i> Login</a><?php endif; ?>
             </div>
         </div>
     </header>

@@ -2,6 +2,30 @@ document.addEventListener('DOMContentLoaded', function () {
     const sizes = ['Solo', 'Partner', 'Family'];
     const backdrop = document.querySelector('[data-modal-backdrop]');
 
+    function setInventoryView(view) {
+        const validView = view === 'grid' ? 'grid' : 'list';
+        document.querySelectorAll('[data-inventory-view-content]').forEach(function (content) { content.style.display = content.dataset.inventoryViewContent === validView ? 'block' : 'none'; });
+        document.querySelectorAll('[data-inventory-view]').forEach(function (button) { const active = button.dataset.inventoryView === validView; button.classList.toggle('is-active', active); button.setAttribute('aria-pressed', active ? 'true' : 'false'); });
+        window.localStorage.setItem('staff-inventory-view', validView);
+    }
+
+    document.querySelectorAll('[data-inventory-view]').forEach(function (button) { button.addEventListener('click', function () { setInventoryView(button.dataset.inventoryView); }); });
+    if (document.querySelector('[data-inventory-view-content]')) setInventoryView(window.localStorage.getItem('staff-inventory-view') || 'list');
+    const editPhotoInput = document.getElementById('edit-photo');
+    if (editPhotoInput && editPhotoInput.form) { editPhotoInput.name = 'photo'; editPhotoInput.form.enctype = 'multipart/form-data'; }
+    document.querySelectorAll('[data-photo-input]').forEach(function (input) {
+        input.addEventListener('change', function () {
+            const filename = input.closest('.photo-field').querySelector('[data-photo-name]');
+            if (filename) filename.textContent = input.files.length ? input.files[0].name : 'No photo selected';
+        });
+    });
+    document.querySelectorAll('.inventory-card-image img').forEach(function (image) { image.loading = 'eager'; image.fetchPriority = 'high'; });
+    document.querySelectorAll('.inventory-item-card').forEach(function (card) {
+        const image = card.querySelector('.inventory-card-image img');
+        if (!image) return;
+        card.querySelectorAll('[data-item-action]').forEach(function (button) { button.dataset.itemPhoto = image.currentSrc || image.src; });
+    });
+
     function openModal(id) {
         const modal = document.getElementById(id);
         if (!modal) return;
@@ -42,12 +66,16 @@ document.addEventListener('DOMContentLoaded', function () {
     document.querySelectorAll('[data-item-action]').forEach(function (button) {
         button.addEventListener('click', function () {
             const id = button.dataset.itemId;
-            const source = sourceFor('view', id) || button;
+            const source = button.closest('.inventory-item-card') ? button : (sourceFor('view', id) || button);
             const variants = source.dataset.itemVariants ? JSON.parse(source.dataset.itemVariants) : [];
             if (button.dataset.itemAction === 'view') {
                 document.querySelector('[data-detail="name"]').textContent = source.dataset.itemName;
                 document.querySelector('[data-detail="category"]').textContent = source.dataset.itemCategory;
                 document.querySelector('[data-detail="description"]').textContent = source.dataset.itemDescription;
+                const photoBox = document.querySelector('.item-photo-placeholder');
+                const photoUrl = button.dataset.itemPhoto || source.dataset.itemPhoto;
+                photoBox.innerHTML = '';
+                if (photoUrl) { const image = document.createElement('img'); image.src = photoUrl; image.alt = source.dataset.itemName; photoBox.appendChild(image); } else photoBox.textContent = 'No photo available';
                 let total = 0;
                 const prices = [];
                 document.querySelector('[data-variant-details]').innerHTML = variants.map(function (variant) { const quantity = Number(variant.quantity); total += quantity; prices.push(Number(variant.price)); const status = quantity > 10 ? 'In Stock' : quantity > 0 ? 'Low Stock' : 'Out of Stock'; return '<tr><td>' + variant.service_size + '</td><td>' + variant.sku + '</td><td>₱' + Number(variant.price).toFixed(2) + '</td><td>' + quantity + '</td><td><span class="stock-badge ' + (quantity > 10 ? 'stock-in' : quantity > 0 ? 'stock-low' : 'stock-out') + '">' + status + '</span></td><td>' + (variant.availability === 'available' ? 'Available' : 'Unavailable') + '</td></tr>'; }).join('');
@@ -55,11 +83,13 @@ document.addEventListener('DOMContentLoaded', function () {
                 document.querySelector('[data-detail="price-range"]').textContent = prices.length ? '₱' + Math.min.apply(null, prices).toFixed(2) + (prices.length > 1 ? ' – ₱' + Math.max.apply(null, prices).toFixed(2) : '') : '₱0.00';
                 openModal('view-modal');
             } else if (button.dataset.itemAction === 'edit') {
-                const editSource = sourceFor('edit', id);
+                const editSource = button.closest('.inventory-item-card') ? button : sourceFor('edit', id);
                 const editVariants = editSource && editSource.dataset.itemVariants ? JSON.parse(editSource.dataset.itemVariants) : [];
                 document.getElementById('edit-name').value = editSource.dataset.itemName;
                 document.getElementById('edit-category').value = editSource.dataset.itemCategoryId;
                 document.getElementById('edit-description').value = editSource.dataset.itemDescription;
+                const editPhotoName = document.querySelector('[data-photo-name="edit"]');
+                if (editPhotoName) editPhotoName.textContent = editSource.dataset.itemPhoto ? 'Current photo attached' : 'No photo selected';
                 document.querySelector('[data-variant-list="edit"]').innerHTML = '';
                 document.querySelectorAll('#edit-item-modal .item-id').forEach(function (input) { input.value = id; });
                 editVariants.forEach(function (variant) { addVariant('edit', variant); });

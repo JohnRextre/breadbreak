@@ -1,6 +1,8 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
 requireRole('customer');
+header('Location: /BreadBreak/customer/menu_dashboard.php');
+exit;
 ?>
 
 <!DOCTYPE html>
@@ -20,9 +22,11 @@ requireRole('customer');
                     <h1>Welcome to BreadBreak, <?php echo htmlspecialchars($_SESSION['first_name'] ?? 'Customer'); ?></h1>
                     <p>Account Type: Customer</p>
                 </div>
-                <div class="form-status success">Browse Products | My Orders | Cart</div>
+                <div class="form-status success">Browse products, manage your cart, and prepare your order.</div>
                 <div class="form-actions-inline" style="text-align: center; margin-top: 1rem;">
-                    <a href="/BreadBreak/index.php" class="auth-link">Browse Products</a>
+                    <a href="/BreadBreak/menu.php" class="auth-link">Browse Products</a>
+                    <span style="margin: 0 0.5rem;">|</span>
+                    <a href="/BreadBreak/cart.php" class="auth-link">View Cart</a>
                     <span style="margin: 0 0.5rem;">|</span>
                     <a href="/BreadBreak/logout.php" class="auth-link">Logout</a>
                 </div>

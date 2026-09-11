@@ -1,12 +1,17 @@
 <?php
+if (session_status() === PHP_SESSION_NONE) session_start();
+if (($_SESSION['role'] ?? '') === 'customer' && !defined('CUSTOMER_MENU_DASHBOARD')) {
+    header('Location: /BreadBreak/customer/menu_dashboard.php');
+    exit;
+}
 $pageTitle = 'Menu | BreadBreak | Bakery Ordering and Inventory Management System';
+$isCustomerDashboard = session_status() === PHP_SESSION_ACTIVE && (($_SESSION['role'] ?? '') === 'customer');
 ?>
 
 <?php include __DIR__ . '/includes/header.php'; ?>
 
 <main>
-    <!-- Breadcrumb -->
-    <section class="breadcrumb-section">
+    <?php if (!$isCustomerDashboard): ?><section class="breadcrumb-section">
         <div class="container">
             <nav class="breadcrumb" aria-label="Breadcrumb">
                 <a href="/BreadBreak/index.php">Home</a>
@@ -14,86 +19,30 @@ $pageTitle = 'Menu | BreadBreak | Bakery Ordering and Inventory Management Syste
                 <span>Menu</span>
             </nav>
         </div>
-    </section>
+    </section><?php endif; ?>
 
-    <!-- Page Hero / Introduction -->
-    <section class="menu-hero section">
-        <div class="container">
-            <div class="section-heading center">
-                <span class="eyebrow">Explore Our Menu</span>
-                <h1>Explore Our Menu</h1>
-                <p>Find your favorite freshly baked treats.</p>
-            </div>
-        </div>
-    </section>
-
-    <!-- Search Bar -->
-    <section class="search-section">
-        <div class="container">
-            <div class="search-box">
-                <i class="fa-solid fa-search"></i>
-                <input 
-                    type="text" 
-                    id="productSearch" 
-                    class="search-input" 
-                    placeholder="Search bakery items..." 
-                    aria-label="Search products"
-                />
-            </div>
-        </div>
-    </section>
-
-    <!-- Category Navigation -->
-    <section class="categories-nav section">
-        <div class="container">
-            <div class="category-filters">
-                <button class="filter-btn active" data-filter="all">All Items</button>
-                <button class="filter-btn" data-filter="bite-sized-breads">Bite-sized Breads</button>
-                <button class="filter-btn" data-filter="big-breads">Big Breads</button>
-                <button class="filter-btn" data-filter="palm-sized-cookies">Palm-sized Cookies</button>
-                <button class="filter-btn" data-filter="cookies">Cookies</button>
-                <button class="filter-btn" data-filter="pastries">Pastries</button>
-                <button class="filter-btn" data-filter="crinkles">Crinkles</button>
-                <button class="filter-btn" data-filter="decadent-cakes">Decadent Cakes</button>
-                <button class="filter-btn" data-filter="round-cakes">Round Cakes</button>
-            </div>
-        </div>
-    </section>
-
-    <!-- Best Sellers Section -->
-    <section class="featured section">
-        <div class="container">
-            <div class="section-heading center">
-                <span class="eyebrow">Our Favorites</span>
-                <h2>Our Best Sellers</h2>
-                <p>Customer favorites, freshly baked for you.</p>
-            </div>
-
-            <div class="product-grid" id="bestSellersGrid">
-                <!-- Best sellers will be populated by JavaScript from database -->
-                <div class="loading-placeholder">
-                    <p>Loading best sellers...</p>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- All Products Section -->
-    <section class="all-products section alt-bg">
-        <div class="container">
-            <div class="section-heading center">
-                <h2>Browse All Products</h2>
-            </div>
-
-            <div class="product-grid" id="productsGrid">
-                <!-- Products will be populated by JavaScript from database -->
-                <div class="loading-placeholder">
-                    <p>Loading products...</p>
-                </div>
-            </div>
-
-            <div id="noResults" class="no-results" style="display: none;">
-                <p>No products found. Try adjusting your search or filter.</p>
+    <section class="catalog-section section">
+        <div class="container catalog-layout">
+            <aside class="catalog-sidebar">
+                <div class="catalog-sidebar-heading"><span class="eyebrow">Shop</span><h2>Menu Category</h2></div>
+                <nav class="catalog-categories" aria-label="Product categories">
+                    <button class="catalog-category active" data-filter="all" type="button">All Items</button>
+                    <button class="catalog-category" data-filter="bite-sized-breads" type="button">Bite-sized Breads</button>
+                    <button class="catalog-category" data-filter="big-breads" type="button">Big Breads</button>
+                    <button class="catalog-category" data-filter="palm-sized-cookies" type="button">Palm-sized Cookies</button>
+                    <button class="catalog-category" data-filter="cookies" type="button">Cookies</button>
+                    <button class="catalog-category" data-filter="pastries" type="button">Pastries</button>
+                    <button class="catalog-category" data-filter="crinkles" type="button">Crinkles</button>
+                    <button class="catalog-category" data-filter="decadent-cakes" type="button">Decadent Cakes</button>
+                    <button class="catalog-category" data-filter="round-cakes" type="button">Round Cakes</button>
+                </nav>
+            </aside>
+            <div class="catalog-content">
+                <div class="catalog-heading"><div><span class="eyebrow">Fresh from the oven</span><h2>Browse Products</h2><p>Choose a service size, then add your favorites to your cart.</p></div><a class="catalog-cart-link" href="/BreadBreak/cart.php"><i class="fa-solid fa-cart-shopping"></i> View Cart</a></div>
+                <div class="catalog-toolbar"><div class="catalog-search"><i class="fa-solid fa-magnifying-glass"></i><label class="sr-only" for="productSearch">Search products</label><input type="search" id="productSearch" class="search-input" placeholder="Search products..." /></div><label class="catalog-select">Sort by<select id="sortProducts"><option value="name-asc">Name (A-Z)</option><option value="name-desc">Name (Z-A)</option><option value="price-asc">Price (Low to High)</option><option value="price-desc">Price (High to Low)</option></select></label><label class="catalog-select">Show<select id="showProducts"><option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="all">All</option></select></label><div class="catalog-view-toggle" role="group" aria-label="Product view"><button class="catalog-view-button" type="button" data-catalog-view="list" aria-label="List view" title="List view"><i class="fa-solid fa-list"></i></button><button class="catalog-view-button is-active" type="button" data-catalog-view="grid" aria-label="Grid view" title="Grid view"><i class="fa-solid fa-table-cells-large"></i></button></div></div>
+                <div class="catalog-results-meta" id="catalogResultsMeta">Loading products...</div>
+                <div class="product-grid catalog-product-grid" id="productsGrid"><div class="loading-placeholder"><p>Loading products...</p></div></div>
+                <div id="noResults" class="no-results" style="display: none;"><p>No products found. Try adjusting your search or category.</p></div>
             </div>
         </div>
     </section>
@@ -376,6 +325,7 @@ $pageTitle = 'Menu | BreadBreak | Bakery Ordering and Inventory Management Syste
 // Product data will be fetched from the API/database
 let allProducts = [];
 let currentFilter = 'all';
+let currentView = 'grid';
 
 // Initialize menu on page load
 document.addEventListener('DOMContentLoaded', function() {
@@ -386,12 +336,10 @@ document.addEventListener('DOMContentLoaded', function() {
 // Attach event listeners to filter buttons and search
 function attachEventListeners() {
     // Filter buttons
-    document.querySelectorAll('.filter-btn').forEach(btn => {
+    document.querySelectorAll('.catalog-category').forEach(btn => {
         btn.addEventListener('click', function() {
-            // Update active button
-            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.catalog-category').forEach(b => b.classList.remove('active'));
             this.classList.add('active');
-            
             currentFilter = this.dataset.filter;
             filterProducts();
         });
@@ -402,6 +350,9 @@ function attachEventListeners() {
     if (searchInput) {
         searchInput.addEventListener('input', filterProducts);
     }
+    document.getElementById('sortProducts').addEventListener('change', filterProducts);
+    document.getElementById('showProducts').addEventListener('change', filterProducts);
+    document.querySelectorAll('[data-catalog-view]').forEach(function (button) { button.addEventListener('click', function () { currentView = button.dataset.catalogView; document.querySelectorAll('[data-catalog-view]').forEach(function (toggle) { toggle.classList.toggle('is-active', toggle.dataset.catalogView === currentView); }); document.getElementById('productsGrid').classList.toggle('list-view', currentView === 'list'); }); });
 }
 
 // Load products from database
@@ -412,11 +363,12 @@ function loadProducts() {
         .then(response => response.json())
         .then(data => {
             allProducts = data.products || [];
-            displayProducts(allProducts);
+            filterProducts();
         })
         .catch(error => {
-            console.log('Note: Using placeholder products. API endpoint not yet configured.');
-            loadPlaceholderProducts();
+            console.error('Unable to load products.', error);
+            allProducts = [];
+            displayProducts(allProducts);
         });
 }
 
@@ -492,20 +444,36 @@ function loadPlaceholderProducts() {
 
 // Filter and search products
 function filterProducts() {
-    const searchTerm = document.getElementById('productSearch').value.toLowerCase();
-    
+    const searchTerm = document.getElementById('productSearch').value.toLowerCase().trim();
     let filtered = allProducts.filter(product => {
         const matchCategory = currentFilter === 'all' || product.category === currentFilter;
         const matchSearch = product.name.toLowerCase().includes(searchTerm) || 
                            product.description.toLowerCase().includes(searchTerm);
         return matchCategory && matchSearch;
     });
+    const sort = document.getElementById('sortProducts').value;
+    filtered.sort(function (left, right) {
+        if (sort === 'price-asc' || sort === 'price-desc') { const difference = Number(left.variants[0].price) - Number(right.variants[0].price); return sort === 'price-asc' ? difference : -difference; }
+        const comparison = left.name.localeCompare(right.name);
+        return sort === 'name-desc' ? -comparison : comparison;
+    });
+    const show = document.getElementById('showProducts').value;
+    displayProducts(show === 'all' ? filtered : filtered.slice(0, Number(show)), filtered.length);
+}
 
-    displayProducts(filtered);
+function escapeHtml(value) {
+    return String(value).replace(/[&<>'"]/g, function (character) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' })[character]; });
+}
+
+function productCard(product) {
+    const photoUrl = product.photo || '/BreadBreak/assets/breadbreak_png/breadbreak_logo.png';
+    const variants = product.variants || [];
+    const options = variants.map(function (variant) { return '<option value="' + variant.id + '">' + escapeHtml(variant.service_size) + ' · ₱' + Number(variant.price).toFixed(2) + ' (' + variant.quantity + ' left)</option>'; }).join('');
+    return '<article class="product-card"><div class="product-image"><img src="' + escapeHtml(photoUrl) + '" alt="' + escapeHtml(product.name) + '" /></div><div class="product-content"><span class="product-category">' + escapeHtml(product.categoryName || product.category.replace(/-/g, ' ')) + '</span><h3>' + escapeHtml(product.name) + '</h3><p class="product-description">' + escapeHtml(product.description) + '</p><div class="product-meta"><div><div class="price">₱' + Number(variants[0].price).toFixed(2) + '</div><div class="variants-count">' + variants.length + ' service size' + (variants.length === 1 ? '' : 's') + '</div></div></div><div class="product-cart-controls"><label class="sr-only" for="variant-' + product.id + '">Choose service size</label><select id="variant-' + product.id + '" class="variant-select">' + options + '</select><form method="POST" action="/BreadBreak/cart.php"><input type="hidden" name="action" value="add" /><input class="selected-variant" type="hidden" name="variant_id" value="' + variants[0].id + '" /><button class="add-to-cart" type="submit"><i class="fa-solid fa-cart-plus"></i> Add to Cart</button></form></div></div></article>';
 }
 
 // Display products in grid
-function displayProducts(products) {
+function displayProducts(products, totalResults) {
     const grid = document.getElementById('productsGrid');
     const noResults = document.getElementById('noResults');
     
@@ -514,65 +482,16 @@ function displayProducts(products) {
     if (products.length === 0) {
         grid.innerHTML = '';
         noResults.style.display = 'block';
+        document.getElementById('catalogResultsMeta').textContent = '0 products';
         return;
     }
 
     noResults.style.display = 'none';
     
-    grid.innerHTML = products.map(product => {
-        const photoUrl = product.photo || '/BreadBreak/assets/breadbreak_png/breadbreak_logo.png';
-        const priceDisplay = product.price ? `₱${product.price.toFixed(2)}` : 'Price TBD';
-        const variantsText = product.variants > 1 ? `${product.variants} sizes` : '1 size';
-        
-        return `
-            <article class="product-card" data-product-id="${product.id}">
-                <div class="product-image">
-                    <img src="${photoUrl}" alt="${product.name}" />
-                </div>
-                <div class="product-content">
-                    <span class="product-category">${product.category.replace(/-/g, ' ')}</span>
-                    <h3>${product.name}</h3>
-                    <p class="product-description">${product.description}</p>
-                    <div class="product-meta">
-                        <div>
-                            <div class="price">${priceDisplay}</div>
-                            <div class="variants-count">${variantsText}</div>
-                        </div>
-                        <a href="#" class="btn-view-item">View Item</a>
-                    </div>
-                </div>
-            </article>
-        `;
-    }).join('');
+    grid.classList.toggle('list-view', currentView === 'list');
+    grid.innerHTML = products.map(productCard).join('');
+    document.getElementById('catalogResultsMeta').textContent = 'Showing ' + products.length + ' of ' + (totalResults || products.length) + ' products';
+    grid.querySelectorAll('.variant-select').forEach(function (select) { select.addEventListener('change', function () { select.closest('.product-cart-controls').querySelector('.selected-variant').value = select.value; }); });
 
-    // Update best sellers (first 6 products are best sellers)
-    const bestSellersGrid = document.getElementById('bestSellersGrid');
-    if (bestSellersGrid && currentFilter === 'all') {
-        bestSellersGrid.innerHTML = products.slice(0, 6).map(product => {
-            const photoUrl = product.photo || '/BreadBreak/assets/breadbreak_png/breadbreak_logo.png';
-            const priceDisplay = product.price ? `₱${product.price.toFixed(2)}` : 'Price TBD';
-            const variantsText = product.variants > 1 ? `${product.variants} sizes` : '1 size';
-            
-            return `
-                <article class="product-card" data-product-id="${product.id}">
-                    <div class="product-image">
-                        <img src="${photoUrl}" alt="${product.name}" />
-                    </div>
-                    <div class="product-content">
-                        <span class="product-category">${product.category.replace(/-/g, ' ')}</span>
-                        <h3>${product.name}</h3>
-                        <p class="product-description">${product.description}</p>
-                        <div class="product-meta">
-                            <div>
-                                <div class="price">${priceDisplay}</div>
-                                <div class="variants-count">${variantsText}</div>
-                            </div>
-                            <a href="#" class="btn-view-item">View Item</a>
-                        </div>
-                    </div>
-                </article>
-            `;
-        }).join('');
-    }
 }
 </script>
