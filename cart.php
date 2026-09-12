@@ -12,9 +12,11 @@ function cartRedirect(): void
 
 $action = $_POST['action'] ?? '';
 $variantId = (int) ($_POST['variant_id'] ?? 0);
+$customerId = (($_SESSION['role'] ?? '') === 'customer') ? (int) ($_SESSION['user_id'] ?? 0) : 0;
 
 try {
     $pdo = getDatabaseConnection();
+    $pdo->exec('CREATE TABLE IF NOT EXISTS customer_cart (user_id INT NOT NULL, variant_id INT NOT NULL, quantity INT NOT NULL DEFAULT 0, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (user_id, variant_id), CONSTRAINT fk_customer_cart_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, CONSTRAINT fk_customer_cart_variant FOREIGN KEY (variant_id) REFERENCES inventory_item_variants(id) ON DELETE CASCADE)');
     if ($action === 'add' || $action === 'update') {
         $statement = $pdo->prepare("SELECT id, quantity, availability FROM inventory_item_variants WHERE id = :id LIMIT 1");
         $statement->execute(['id' => $variantId]);
@@ -25,6 +27,13 @@ try {
         }
     } elseif ($action === 'remove') {
         unset($_SESSION['cart'][$variantId]);
+    }
+    if ($customerId > 0) {
+        $pdo->prepare('DELETE FROM customer_cart WHERE user_id = :user_id')->execute(['user_id' => $customerId]);
+        $saveCart = $pdo->prepare('INSERT INTO customer_cart (user_id, variant_id, quantity) VALUES (:user_id, :variant_id, :quantity)');
+        foreach ($_SESSION['cart'] as $savedVariantId => $savedQuantity) {
+            if ((int) $savedQuantity > 0) $saveCart->execute(['user_id' => $customerId, 'variant_id' => (int) $savedVariantId, 'quantity' => (int) $savedQuantity]);
+        }
     }
 } catch (Throwable $exception) {
     $_SESSION['cart_error'] = 'Unable to update the cart right now.';

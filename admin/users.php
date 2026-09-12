@@ -5,6 +5,8 @@ require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../config/database.php';
 
 $pdo = getDatabaseConnection();
+$statusReasonColumn = (int) $pdo->query("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'status_reason'")->fetchColumn();
+if (!$statusReasonColumn) $pdo->exec("ALTER TABLE users ADD COLUMN status_reason VARCHAR(255) NULL AFTER status");
 $pageTitle = 'User Management';
 $activePage = 'users';
 $errors = [];
@@ -99,8 +101,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 : 'Administrator accounts cannot be deactivated or deleted.';
         }
         if (!$errors) {
-            $update = $pdo->prepare('UPDATE users SET status = :status WHERE id = :id');
-            $update->execute(['status' => $newStatus, 'id' => $userId]);
+            $update = $pdo->prepare('UPDATE users SET status = :status, status_reason = :status_reason WHERE id = :id');
+            $update->execute(['status' => $newStatus, 'status_reason' => $newStatus === 'inactive' ? $reason : null, 'id' => $userId]);
             $_SESSION['admin_user_success'] = 'Account status updated successfully.';
             header('Location: ' . BASE_URL . '/admin/users.php');
             exit;
@@ -132,7 +134,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$sql = 'SELECT id, first_name, last_name, phone, email, role, status, created_at FROM users';
+$sql = 'SELECT id, first_name, last_name, phone, email, role, status, status_reason, created_at FROM users';
 $params = [];
 if ($search !== '') {
     $sql .= ' WHERE first_name LIKE :search_first OR last_name LIKE :search_last OR email LIKE :search_email OR phone LIKE :search_phone';

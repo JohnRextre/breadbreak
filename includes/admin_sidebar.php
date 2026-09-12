@@ -12,7 +12,7 @@ $navigation = [
         ['settings', 'Settings', 'settings'],
     ],
     'account' => [
-        ['profile', 'My Profile', 'profile'],
+        ['profile', 'My Account', 'profile'],
     ],
 ];
 

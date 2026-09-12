@@ -25,7 +25,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_account') {
 
 $pageTitle = 'Sign In | BreadBreak';
 $errors = [];
-$successMessage = '';
+$successMessage = ($_GET['logged_out'] ?? '') === '1' ? 'You have been logged out. Your cart was saved.' : '';
 $selectedAccountType = $_POST['account_type'] ?? '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -55,18 +55,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!isset($allowedRoles[$roleKey])) {
                 $errors['account_type'] = 'Invalid account type.';
             } else {
-                $sql = 'SELECT * FROM users WHERE (email = :email_identifier OR phone = :phone_identifier) AND status = :status LIMIT 1';
+                $sql = 'SELECT * FROM users WHERE email = :email_identifier OR phone = :phone_identifier LIMIT 1';
                 $stmt = $pdo->prepare($sql);
                 $stmt->execute([
                     'email_identifier' => $identifier,
                     'phone_identifier' => $identifier,
-                    'status' => 'active',
                 ]);
 
                 $user = $stmt->fetch();
 
                 if (!$user || $user['role'] !== $roleKey || !password_verify($password, $user['password'])) {
                     $errors['password'] = 'Incorrect Password or Account Type';
+                } elseif (($user['status'] ?? 'active') !== 'active') {
+                    $reason = trim((string) ($user['status_reason'] ?? ''));
+                    $errors['password'] = 'This account has been deactivated.' . ($reason !== '' ? ' Reason: ' . $reason : ' Please contact an administrator.');
                 } else {
                     session_regenerate_id(true);
                     $_SESSION['user_id'] = (int) $user['id'];
@@ -74,6 +76,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['last_name'] = $user['last_name'];
                     $_SESSION['role'] = $user['role'];
                     $_SESSION['email'] = $user['email'];
+                    $_SESSION['cart'] = is_array($_SESSION['cart'] ?? null) ? $_SESSION['cart'] : [];
+                    $pdo->exec('CREATE TABLE IF NOT EXISTS customer_cart (user_id INT NOT NULL, variant_id INT NOT NULL, quantity INT NOT NULL DEFAULT 0, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (user_id, variant_id), CONSTRAINT fk_customer_cart_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, CONSTRAINT fk_customer_cart_variant FOREIGN KEY (variant_id) REFERENCES inventory_item_variants(id) ON DELETE CASCADE)');
+                    $savedCartStatement = $pdo->prepare('SELECT variant_id, quantity FROM customer_cart WHERE user_id = :user_id');
+                    $savedCartStatement->execute(['user_id' => (int) $user['id']]);
+                    foreach ($savedCartStatement->fetchAll() as $savedItem) {
+                        $_SESSION['cart'][(int) $savedItem['variant_id']] = (int) $savedItem['quantity'];
+                    }
 
                     if ($user['role'] === 'admin') {
                         header('Location: /BreadBreak/admin/dashboard.php');
@@ -131,6 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <h1>Welcome Back</h1>
                     <p>Sign in to continue to BreadBreak.</p>
                 </div>
+                <?php if ($successMessage): ?><div class="form-status success" role="status"><?php echo htmlspecialchars($successMessage); ?></div><?php endif; ?>
 
                 <form class="auth-form" method="POST" novalidate data-form-type="login">
                     <div class="field-group">

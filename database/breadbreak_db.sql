@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
     profile_mime VARCHAR(50) NULL,
     role ENUM('admin', 'staff', 'customer') NOT NULL,
     status ENUM('active', 'inactive') DEFAULT 'active',
+    status_reason VARCHAR(255) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
@@ -53,3 +54,13 @@ CREATE TABLE IF NOT EXISTS inventory_item_variants (
 INSERT IGNORE INTO menu_categories (name) VALUES
     ('Bite-sized Breads'), ('Big Breads'), ('Palm-sized Cookies'), ('Cookies'),
     ('Pastries'), ('Crinkles'), ('Decadent Cakes'), ('Round Cakes');
+
+CREATE TABLE IF NOT EXISTS customer_cart (
+    user_id INT NOT NULL,
+    variant_id INT NOT NULL,
+    quantity INT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, variant_id),
+    CONSTRAINT fk_customer_cart_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_customer_cart_variant FOREIGN KEY (variant_id) REFERENCES inventory_item_variants(id) ON DELETE CASCADE
+);

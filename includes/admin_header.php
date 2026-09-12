@@ -1,12 +1,22 @@
 <?php
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/../config/database.php';
 
 $pageTitle = $pageTitle ?? 'Admin Panel | BreadBreak';
 $activePage = $activePage ?? basename($_SERVER['PHP_SELF'], '.php');
 $adminName = trim(($_SESSION['first_name'] ?? '') . ' ' . ($_SESSION['last_name'] ?? ''));
 $adminName = $adminName !== '' ? $adminName : 'Admin';
 $adminInitial = strtoupper(substr($adminName, 0, 1));
+$adminProfileImage = '';
+if (!empty($_SESSION['user_id'])) {
+    $adminHeaderStatement = getDatabaseConnection()->prepare('SELECT profile_data, profile_mime FROM users WHERE id = :id LIMIT 1');
+    $adminHeaderStatement->execute(['id' => (int) $_SESSION['user_id']]);
+    $adminHeaderAccount = $adminHeaderStatement->fetch() ?: [];
+    if (!empty($adminHeaderAccount['profile_data']) && !empty($adminHeaderAccount['profile_mime'])) {
+        $adminProfileImage = 'data:' . $adminHeaderAccount['profile_mime'] . ';base64,' . base64_encode($adminHeaderAccount['profile_data']);
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -34,7 +44,7 @@ $adminInitial = strtoupper(substr($adminName, 0, 1));
                     <h1><?php echo htmlspecialchars($pageTitle); ?></h1>
                 </div>
                 <div class="admin-identity">
-                    <div class="avatar" aria-hidden="true"><?php echo htmlspecialchars($adminInitial); ?></div>
+                    <div class="avatar" aria-hidden="true"><?php if ($adminProfileImage): ?><img src="<?php echo htmlspecialchars($adminProfileImage); ?>" alt="" /><?php else: ?><?php echo htmlspecialchars($adminInitial); ?><?php endif; ?></div>
                     <div class="identity-copy">
                         <strong><?php echo htmlspecialchars($adminName); ?></strong>
                         <span>Administrator</span>

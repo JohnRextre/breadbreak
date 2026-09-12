@@ -9,5 +9,5 @@ if (ini_get('session.use_cookies')) {
 }
 
 session_destroy();
-header('Location: /BreadBreak/login.php');
+header('Location: /BreadBreak/login.php?logged_out=1');
 exit;

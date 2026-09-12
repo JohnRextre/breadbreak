@@ -7,7 +7,7 @@ $staffNavigation = [
         ['reports', 'Reports & Analytics', 'chart'],
     ],
     'account' => [
-        ['profile', 'My Profile', 'profile'],
+        ['profile', 'My Account', 'profile'],
     ],
 ];
 $staffIcons = [

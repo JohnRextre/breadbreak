@@ -1,11 +1,27 @@
 <?php
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/../config/database.php';
 $pageTitle = $pageTitle ?? 'Staff Portal | BreadBreak';
 $activePage = $activePage ?? basename($_SERVER['PHP_SELF'], '.php');
-$staffName = trim(($_SESSION['first_name'] ?? '') . ' ' . ($_SESSION['last_name'] ?? ''));
+$staffAccount = [];
+if (!empty($_SESSION['user_id'])) {
+    $staffHeaderStatement = getDatabaseConnection()->prepare('SELECT first_name, last_name, email, profile_data, profile_mime FROM users WHERE id = :id AND role = :role LIMIT 1');
+    $staffHeaderStatement->execute(['id' => (int) $_SESSION['user_id'], 'role' => 'staff']);
+    $staffAccount = $staffHeaderStatement->fetch() ?: [];
+    if ($staffAccount) {
+        $_SESSION['first_name'] = $staffAccount['first_name'];
+        $_SESSION['last_name'] = $staffAccount['last_name'];
+        $_SESSION['email'] = $staffAccount['email'];
+    }
+}
+$staffName = trim(($staffAccount['first_name'] ?? $_SESSION['first_name'] ?? '') . ' ' . ($staffAccount['last_name'] ?? $_SESSION['last_name'] ?? ''));
 $staffName = $staffName !== '' ? $staffName : 'Staff';
 $staffInitial = strtoupper(substr($staffName, 0, 1));
+$staffProfileImage = '';
+if (!empty($staffAccount['profile_data']) && !empty($staffAccount['profile_mime'])) {
+    $staffProfileImage = 'data:' . $staffAccount['profile_mime'] . ';base64,' . base64_encode($staffAccount['profile_data']);
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -27,6 +43,6 @@ $staffInitial = strtoupper(substr($staffName, 0, 1));
             <header class="admin-topbar">
                 <button class="menu-toggle" type="button" aria-label="Open navigation" aria-controls="admin-sidebar" aria-expanded="false"><span></span><span></span><span></span></button>
                 <div class="topbar-title"><span class="topbar-kicker">BreadBreak / Staff</span><h1><?php echo htmlspecialchars($pageTitle); ?></h1></div>
-                <div class="admin-identity"><div class="avatar" aria-hidden="true"><?php echo htmlspecialchars($staffInitial); ?></div><div class="identity-copy"><strong><?php echo htmlspecialchars($staffName); ?></strong><span>Staff</span></div></div>
+                <div class="admin-identity"><div class="avatar" aria-hidden="true"><?php if ($staffProfileImage): ?><img src="<?php echo htmlspecialchars($staffProfileImage); ?>" alt="" /><?php else: ?><?php echo htmlspecialchars($staffInitial); ?><?php endif; ?></div><div class="identity-copy"><strong><?php echo htmlspecialchars($staffName); ?></strong><span>Staff</span></div></div>
             </header>
             <main class="admin-content">

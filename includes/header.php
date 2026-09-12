@@ -3,6 +3,19 @@ if (session_status() === PHP_SESSION_NONE) session_start();
 $currentPage = basename($_SERVER['PHP_SELF']);
 $headerCartCount = isset($_SESSION['cart']) && is_array($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
 $isCustomerHeader = ($_SESSION['role'] ?? '') === 'customer';
+$customerProfileImage = $profileImage ?? '';
+$customerInitial = strtoupper(substr(trim((string) ($_SESSION['first_name'] ?? '')), 0, 1));
+if ($isCustomerHeader && !$customerProfileImage && !empty($_SESSION['user_id'])) {
+    require_once __DIR__ . '/../config/database.php';
+    $headerAccountStatement = getDatabaseConnection()->prepare('SELECT first_name, profile_data, profile_mime FROM users WHERE id = :id LIMIT 1');
+    $headerAccountStatement->execute(['id' => (int) $_SESSION['user_id']]);
+    $headerAccount = $headerAccountStatement->fetch() ?: [];
+    $customerInitial = strtoupper(substr(trim((string) ($headerAccount['first_name'] ?? '')), 0, 1));
+    if (!empty($headerAccount['profile_data']) && !empty($headerAccount['profile_mime'])) {
+        $customerProfileImage = 'data:' . $headerAccount['profile_mime'] . ';base64,' . base64_encode($headerAccount['profile_data']);
+    }
+}
+$customerInitial = $customerInitial ?: '?';
 $navItems = [
     ['label' => 'Home', 'href' => '/BreadBreak/index.php', 'page' => 'index.php'],
     ['label' => 'Shop', 'href' => '/BreadBreak/menu.php', 'page' => 'menu.php'],
@@ -45,7 +58,7 @@ $navItems = [
             </nav><?php endif; ?>
 
             <div class="header-tools">
-                <?php if ($isCustomerHeader): ?><a href="#" class="customer-header-icon is-disabled" aria-label="Delivery tracking coming soon" title="Delivery tracking coming soon" aria-disabled="true"><i class="fa-solid fa-truck"></i></a><a href="/BreadBreak/customer/account.php" class="customer-profile-button" aria-label="Open My Account" title="My Account"><i class="fa-solid fa-user"></i></a><?php endif; ?>
+                <?php if ($isCustomerHeader): ?><a href="#" class="customer-header-icon is-disabled" aria-label="Delivery tracking coming soon" title="Delivery tracking coming soon" aria-disabled="true"><i class="fa-solid fa-truck"></i></a><a href="/BreadBreak/customer/account.php" class="customer-profile-button" aria-label="Open My Account" title="My Account"><?php if ($customerProfileImage): ?><img src="<?php echo htmlspecialchars($customerProfileImage); ?>" alt="Profile photo" /><?php else: ?><span aria-hidden="true"><?php echo htmlspecialchars($customerInitial); ?></span><?php endif; ?></a><?php endif; ?>
                 <a href="/BreadBreak/cart.php" class="cart-button" aria-label="Shopping cart" title="Shopping cart">
                     <i class="fa-solid fa-cart-shopping"></i><span class="cart-count" data-cart-count><?php echo (int) $headerCartCount; ?></span>
                 </a>

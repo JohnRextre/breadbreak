@@ -1,4 +1,5 @@
 body.staff-body { --admin-brown: #7b523b; }
+.staff-account-delete h3 { color: #a34f43; }
 .staff-body .sidebar-logo small { color: #9a6a4d; }
 .staff-body .topbar-kicker { color: #9a6a4d; }
 .inventory-page-intro { align-items: flex-end; }
