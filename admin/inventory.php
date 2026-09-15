@@ -21,7 +21,7 @@ if (adminInventoryTableExists($pdo, 'inventory_items') && adminInventoryTableExi
     if ($inventoryItems) {
         $itemIds = array_column($inventoryItems, 'id');
         $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
-        $variantStatement = $pdo->prepare("SELECT * FROM inventory_item_variants WHERE inventory_item_id IN ($placeholders) ORDER BY FIELD(inventory_item_id, $placeholders), FIELD(service_size, 'Solo', 'Partner', 'Family')");
+        $variantStatement = $pdo->prepare("SELECT * FROM inventory_item_variants WHERE inventory_item_id IN ($placeholders) ORDER BY FIELD(inventory_item_id, $placeholders), id ASC");
         $variantStatement->execute([...$itemIds, ...$itemIds]);
         foreach ($variantStatement->fetchAll() as $variant) $variantLookup[$variant['inventory_item_id']][] = $variant;
     }

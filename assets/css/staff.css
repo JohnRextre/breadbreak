@@ -16,7 +16,9 @@ body.staff-body { --admin-brown: #7b523b; }
 .category-card > a { flex: 1; color: inherit; text-decoration: none; }
 .category-card:hover, .category-card.active { border-color: #c99d83; background: #f8eee8; }
 .category-card .category-actions { margin-left: 5px; border: 0; color: var(--admin-muted); background: transparent; font-size: 17px; cursor: pointer; }
-.menu-add-row { display: flex; justify-content: flex-end; margin-top: 15px; }
+.menu-add-row { display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px; flex-wrap: wrap; }
+.category-sizes-tags { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; border: 1px solid var(--admin-line); border-radius: 7px; background: #faf8f6; min-height: 38px; align-items: center; font-size: 12px; color: var(--admin-muted); }
+.size-tag { display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 12px; background: #ebdcd3; color: var(--admin-brown-dark); font-size: 11px; font-weight: 600; }
 .variant-section-title { margin: 4px 0 0; color: var(--admin-ink); font-family: 'Manrope', sans-serif; font-size: 15px; }
 .variant-list { display: grid; gap: 12px; }
 .variant-card { padding: 16px; border: 1px solid var(--admin-line); border-radius: 9px; background: #fcfaf8; }

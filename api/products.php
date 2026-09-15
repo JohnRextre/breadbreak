@@ -5,7 +5,7 @@ header('Content-Type: application/json; charset=utf-8');
 
 try {
     $pdo = getDatabaseConnection();
-    $statement = $pdo->query("SELECT i.id, i.name, i.description, i.photo, i.photo_data, i.photo_mime, c.name AS category_name, v.id AS variant_id, v.service_size, v.price, v.quantity, v.availability FROM inventory_items i JOIN menu_categories c ON c.id = i.category_id JOIN inventory_item_variants v ON v.inventory_item_id = i.id WHERE v.availability = 'available' AND v.quantity > 0 ORDER BY i.name ASC, FIELD(v.service_size, 'Solo', 'Partner', 'Family')");
+    $statement = $pdo->query("SELECT i.id, i.name, i.description, i.photo, i.photo_data, i.photo_mime, c.name AS category_name, v.id AS variant_id, v.service_size, v.price, v.quantity, v.availability FROM inventory_items i JOIN menu_categories c ON c.id = i.category_id JOIN inventory_item_variants v ON v.inventory_item_id = i.id WHERE v.availability = 'available' AND v.quantity > 0 ORDER BY i.name ASC, v.id ASC");
     $products = [];
     foreach ($statement->fetchAll() as $row) {
         $id = (int) $row['id'];

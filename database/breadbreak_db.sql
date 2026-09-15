@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS inventory_items (
 CREATE TABLE IF NOT EXISTS inventory_item_variants (
     id INT PRIMARY KEY AUTO_INCREMENT,
     inventory_item_id INT NOT NULL,
-    service_size ENUM('Solo', 'Partner', 'Family') NOT NULL,
+    service_size VARCHAR(100) NOT NULL,
     sku VARCHAR(80) NOT NULL UNIQUE,
     price DECIMAL(10,2) NOT NULL,
     quantity INT NOT NULL DEFAULT 0,
@@ -51,9 +51,39 @@ CREATE TABLE IF NOT EXISTS inventory_item_variants (
     UNIQUE KEY unique_item_service_size (inventory_item_id, service_size)
 );
 
-INSERT IGNORE INTO menu_categories (name) VALUES
-    ('Bite-sized Breads'), ('Big Breads'), ('Palm-sized Cookies'), ('Cookies'),
-    ('Pastries'), ('Crinkles'), ('Decadent Cakes'), ('Round Cakes');
+CREATE TABLE IF NOT EXISTS category_service_sizes (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    category_id INT NOT NULL,
+    size_name VARCHAR(100) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_category_size FOREIGN KEY (category_id) REFERENCES menu_categories(id) ON UPDATE CASCADE ON DELETE CASCADE,
+    UNIQUE KEY unique_category_size (category_id, size_name)
+);
+
+INSERT IGNORE INTO menu_categories (id, name) VALUES
+    (1, 'Bite-sized Breads'),
+    (2, 'Big Breads'),
+    (3, 'Palm-sized Cookies'),
+    (4, 'Cookies'),
+    (5, 'Pastries'),
+    (6, 'Crinkles'),
+    (7, 'Decadent Cakes'),
+    (8, 'Round Cakes');
+
+INSERT IGNORE INTO category_service_sizes (category_id, size_name)
+SELECT id, 'Solo' FROM menu_categories WHERE name IN ('Bite-sized Breads', 'Big Breads')
+UNION ALL
+SELECT id, 'Partner' FROM menu_categories WHERE name IN ('Bite-sized Breads', 'Big Breads')
+UNION ALL
+SELECT id, 'Family' FROM menu_categories WHERE name IN ('Bite-sized Breads', 'Big Breads')
+UNION ALL
+SELECT id, '1pc' FROM menu_categories WHERE name IN ('Palm-sized Cookies', 'Cookies', 'Pastries', 'Crinkles', 'Decadent Cakes')
+UNION ALL
+SELECT id, '10pcs tub' FROM menu_categories WHERE name IN ('Palm-sized Cookies', 'Cookies', 'Pastries', 'Crinkles', 'Decadent Cakes')
+UNION ALL
+SELECT id, '6-inch round' FROM menu_categories WHERE name = 'Round Cakes'
+UNION ALL
+SELECT id, '8-inch round' FROM menu_categories WHERE name = 'Round Cakes';
 
 CREATE TABLE IF NOT EXISTS customer_cart (
     user_id INT NOT NULL,
@@ -64,3 +94,4 @@ CREATE TABLE IF NOT EXISTS customer_cart (
     CONSTRAINT fk_customer_cart_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     CONSTRAINT fk_customer_cart_variant FOREIGN KEY (variant_id) REFERENCES inventory_item_variants(id) ON DELETE CASCADE
 );
+
