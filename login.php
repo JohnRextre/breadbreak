@@ -25,7 +25,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_account') {
 
 $pageTitle = 'Sign In | BreadBreak';
 $errors = [];
-$successMessage = ($_GET['logged_out'] ?? '') === '1' ? 'You have been logged out. Your cart was saved.' : '';
+$successMessage = ($_GET['logged_out'] ?? '') === '1' ? 'You have been logged out.' : '';
 $selectedAccountType = $_POST['account_type'] ?? '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
