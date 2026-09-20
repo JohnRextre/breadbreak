@@ -694,3 +694,80 @@
     background-color: #f8fdfa !important;
 }
 
+/* --------------------------------------------------------------------------
+   Payment Method Selector Pills
+   -------------------------------------------------------------------------- */
+.pay-method-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: .6rem;
+}
+
+@media (max-width: 480px) {
+    .pay-method-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.pay-method-option {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: .45rem;
+    padding: .75rem .5rem;
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+    background: #fff;
+    user-select: none;
+    text-align: center;
+}
+
+.pay-method-option:hover {
+    border-color: var(--accent);
+    background: #fdfaf6;
+}
+
+.pay-method-option.is-selected {
+    border-color: var(--accent);
+    background: #fdf4e9;
+    box-shadow: 0 0 0 3px rgba(180,110,30,.12);
+}
+
+.pay-method-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    font-size: 1.1rem;
+}
+
+.pay-method-label {
+    font-size: .8rem;
+    font-weight: 700;
+    color: var(--brown-900);
+}
+
+/* Cash denomination quick-select buttons */
+.cash-denom-btn {
+    padding: .3rem .65rem;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--brown-900);
+    font-size: .82rem;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+    transition: border-color .15s ease, background .15s ease;
+}
+
+.cash-denom-btn:hover {
+    border-color: var(--accent);
+    background: #fdf4e9;
+    color: var(--accent);
+}
+

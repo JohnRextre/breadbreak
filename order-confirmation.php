@@ -20,7 +20,7 @@ if ($ref) {
     $oStmt = $pdo->prepare(
         "SELECT id, reference_id, status, fulfillment_type, subtotal, vatable_sales, vat_amount, vat_exempt_sales,
                 discount_type, discount_amount, discount_id_number, discount_name,
-                delivery_fee, delivery_address, total_amount, created_at
+                delivery_fee, delivery_address, total_amount, payment_method, cash_amount, created_at
          FROM orders
          WHERE reference_id = :ref AND customer_id = :cid LIMIT 1"
     );
@@ -79,19 +79,24 @@ function orderStatusBadge(string $status): string
 
 $paymentStatus = $payment['status'] ?? 'pending';
 $orderStatus   = $order['status']   ?? 'pending';
-$isTerminal    = in_array($paymentStatus, ['paid', 'failed', 'expired', 'voided'], true);
+$orderPayMethod = strtoupper($order['payment_method'] ?? 'GCASH');
+$isCashOrder   = ($orderPayMethod === 'CASH');
+// Cash orders with pending status are awaiting physical payment — don't auto-refresh
+$isTerminal    = in_array($paymentStatus, ['paid', 'failed', 'expired', 'voided'], true) || $isCashOrder;
 
-$iconClass = match($paymentStatus) {
-    'paid'           => 'icon-paid',
-    'failed','voided'=> 'icon-failed',
-    'expired'        => 'icon-expired',
-    default          => 'icon-pending',
+$iconClass = match(true) {
+    $paymentStatus === 'paid'                            => 'icon-paid',
+    in_array($paymentStatus, ['failed','voided'], true) => 'icon-failed',
+    $paymentStatus === 'expired'                         => 'icon-expired',
+    $isCashOrder                                         => 'icon-pending',
+    default                                              => 'icon-pending',
 };
-$iconSymbol = match($paymentStatus) {
-    'paid'           => 'circle-check',
-    'failed','voided'=> 'circle-xmark',
-    'expired'        => 'hourglass-end',
-    default          => 'clock',
+$iconSymbol = match(true) {
+    $paymentStatus === 'paid'                            => 'circle-check',
+    in_array($paymentStatus, ['failed','voided'], true) => 'circle-xmark',
+    $paymentStatus === 'expired'                         => 'hourglass-end',
+    $isCashOrder                                         => 'money-bill-wave',
+    default                                              => 'clock',
 };
 
 $pageTitle = 'Order Confirmation | BreadBreak';
@@ -137,6 +142,13 @@ $pageTitle = 'Order Confirmation | BreadBreak';
         <?php if ($paymentStatus === 'paid'): ?>
             <h1 style="color:var(--brown-900)">Payment Confirmed!</h1>
             <p>Your BreadBreak order has been received and is now being processed. Thank you for your purchase!</p>
+        <?php elseif ($isCashOrder): ?>
+            <h1 style="color:var(--brown-900)">Order Placed! 🎉</h1>
+            <?php if (($order['fulfillment_type'] ?? '') === 'pickup'): ?>
+                <p>Your order is confirmed. Please <strong>bring your cash payment to our store</strong> when you come to pick up your order. Our staff will collect payment before releasing it.</p>
+            <?php else: ?>
+                <p>Your order is confirmed. Please <strong>prepare your cash payment</strong> — our rider will collect it upon delivery.</p>
+            <?php endif; ?>
         <?php elseif (in_array($paymentStatus, ['failed', 'voided'], true)): ?>
             <h1 style="color:var(--brown-900)">Payment Failed</h1>
             <p>Unfortunately your payment was not completed. Please try placing a new order.</p>
@@ -172,11 +184,51 @@ $pageTitle = 'Order Confirmation | BreadBreak';
                 <dd><?php echo date('F j, Y g:i A', strtotime($order['created_at'])); ?></dd>
 
                 <dt>Payment Method</dt>
-                <dd><?php echo htmlspecialchars(($payment['payment_method'] ?? 'GCash') . ' · ' . ($payment['payment_channel'] ?? 'GCASH')); ?></dd>
+                <dd>
+                    <?php
+                    $pmLabels = [
+                        'GCASH'     => ['GCash', 'fa-mobile-screen', '#1777ff'],
+                        'PAYMAYA'   => ['Maya', 'fa-leaf', '#00c17b'],
+                        'GRABPAY'   => ['GrabPay', 'fa-car-side', '#00b14f'],
+                        'SHOPEEPAY' => ['ShopeePay', 'fa-bag-shopping', '#ee4d2d'],
+                        'CARD'      => ['Credit/Debit Card', 'fa-credit-card', '#5849d1'],
+                        'CASH'      => ['Cash on ' . (($order['fulfillment_type'] ?? 'delivery') === 'pickup' ? 'Pickup' : 'Delivery'), 'fa-money-bill-wave', '#b8860b'],
+                    ];
+                    [$pmName, $pmIcon, $pmColor] = $pmLabels[$orderPayMethod] ?? [$orderPayMethod, 'fa-circle', '#666'];
+                    ?>
+                    <span style="display:inline-flex;align-items:center;gap:.4rem;font-weight:700;color:var(--brown-900);">
+                        <i class="fa-solid <?php echo $pmIcon; ?>" style="color:<?php echo $pmColor; ?>;"></i>
+                        <?php echo htmlspecialchars($pmName); ?>
+                    </span>
+                </dd>
 
                 <dt>Total Amount</dt>
-                <dd><strong style="color:var(--accent)">₱<?php echo number_format((float) ($payment['amount'] ?? 0), 2); ?></strong></dd>
+                <dd><strong style="color:var(--accent)">₱<?php echo number_format((float) $order['total_amount'], 2); ?></strong></dd>
 
+                <?php if ($isCashOrder && !empty($order['cash_amount'])): ?>
+                <dt style="grid-column:1/-1;margin-top:.3rem;border-top:1px solid var(--border);padding-top:.5rem;">
+                    <i class="fa-solid fa-coins" style="margin-right:.3rem;color:#b8860b;"></i>Cash Payment Details
+                </dt>
+                <dd style="grid-column:1/-1;">
+                    <div style="background:#fdfaf6;border:1.5px solid var(--border);border-radius:10px;padding:.75rem 1rem;display:grid;grid-template-columns:1fr 1fr;gap:.4rem .9rem;font-size:.9rem;">
+                        <span style="color:var(--muted);">Cash to Pay With:</span>
+                        <strong>₱<?php echo number_format((float) $order['cash_amount'], 2); ?></strong>
+                        <span style="color:var(--muted);">Your Change:</span>
+                        <strong style="color:#1a6645;">₱<?php echo number_format(max(0, (float)$order['cash_amount'] - (float)$order['total_amount']), 2); ?></strong>
+                    </div>
+                    <?php if (($order['fulfillment_type'] ?? 'delivery') === 'pickup'): ?>
+                    <div style="margin-top:.5rem;font-size:.82rem;padding:.5rem .75rem;background:#fff3e0;border:1px solid #f5c842;border-radius:8px;color:#7a4200;">
+                        <i class="fa-solid fa-store" style="margin-right:.3rem;"></i>
+                        <strong>Store Pickup:</strong> Please bring ₱<?php echo number_format((float)$order['cash_amount'], 2); ?> when you visit our store. Pay at the counter before claiming your order.
+                    </div>
+                    <?php else: ?>
+                    <div style="margin-top:.5rem;font-size:.82rem;padding:.5rem .75rem;background:#e8f7ef;border:1px solid #a3d9bc;border-radius:8px;color:#1a6645;">
+                        <i class="fa-solid fa-truck" style="margin-right:.3rem;"></i>
+                        <strong>Delivery:</strong> Please prepare ₱<?php echo number_format((float)$order['cash_amount'], 2); ?>. Our rider will collect it and give you ₱<?php echo number_format(max(0,(float)$order['cash_amount']-(float)$order['total_amount']),2); ?> change.
+                    </div>
+                    <?php endif; ?>
+                </dd>
+                <?php endif; ?>
                 <dt>Fulfillment</dt>
                 <dd>
                     <?php if (($order['fulfillment_type'] ?? 'delivery') === 'pickup'): ?>
@@ -311,9 +363,11 @@ $pageTitle = 'Order Confirmation | BreadBreak';
 
                     <!-- Grand Total -->
                     <tr style="border-top:2px solid var(--border);">
-                        <td colspan="5" class="text-right" style="font-weight:700;color:var(--brown-900);padding-top:1rem;font-size:1rem;">Total Amount Paid</td>
+                        <td colspan="5" class="text-right" style="font-weight:700;color:var(--brown-900);padding-top:1rem;font-size:1rem;">
+                            <?php echo $isCashOrder ? 'Total to Pay' : 'Total Amount Paid'; ?>
+                        </td>
                         <td class="text-right price-cell" style="font-size:1.2rem;padding-top:1rem;">
-                            ₱<?php echo number_format((float) ($payment['amount'] ?? 0), 2); ?>
+                            ₱<?php echo number_format((float) $order['total_amount'], 2); ?>
                         </td>
                     </tr>
                 </tbody>

@@ -171,6 +171,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
         }
     }
 
+    // ── Payment method ──
+    $allowedMethods = ['GCASH', 'PAYMAYA', 'GRABPAY', 'SHOPEEPAY', 'CARD', 'CASH'];
+    $paymentMethod  = strtoupper(trim($_POST['payment_method'] ?? 'GCASH'));
+    if (!in_array($paymentMethod, $allowedMethods, true)) {
+        $paymentMethod = 'GCASH';
+    }
+
+    // Cash amount validation (done after grand total calculated below)
+    $cashAmountRaw = null;
+    if ($paymentMethod === 'CASH') {
+        $cashAmountRaw = (float) ($_POST['cash_amount'] ?? 0);
+    }
+
     // Calculations
     $subtotal = $cartTotal;
 
@@ -194,6 +207,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
 
     $grandTotal = round($netItemsTotal + $deliveryFeePost, 2);
 
+    // Validate cash amount AFTER grand total is known
+    if (!$checkoutError && $paymentMethod === 'CASH') {
+        if ($cashAmountRaw < $grandTotal) {
+            $checkoutError = 'Cash amount must be at least ₱' . number_format($grandTotal, 2) . ' (the total to pay).';
+        } elseif ($cashAmountRaw > ($grandTotal * 3) || $cashAmountRaw > 5000) {
+            $checkoutError = 'Cash amount seems too large. Please enter the actual cash denomination you will bring (max ₱5,000).';
+        }
+    }
+
     if (!$checkoutError) {
         foreach ($cartItems as $item) {
             if ($item['quantity'] > $item['stock_qty']) {
@@ -211,11 +233,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
                 "INSERT INTO orders 
                     (customer_id, reference_id, status, fulfillment_type, subtotal, vatable_sales, vat_amount, vat_exempt_sales,
                      discount_type, discount_amount, discount_id_number, discount_name,
-                     delivery_fee, delivery_address, total_amount)
+                     delivery_fee, delivery_address, total_amount, payment_method, cash_amount)
                  VALUES 
                     (:cid, :ref, 'pending', :ftype, :sub, :vsales, :vamt, :vexempt,
                      :dtype, :damt, :did, :dname,
-                     :fee, :addr, :total)"
+                     :fee, :addr, :total, :pm, :ca)"
             )->execute([
                 'cid'      => $customerId,
                 'ref'      => $referenceId,
@@ -231,6 +253,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
                 'fee'      => $deliveryFeePost,
                 'addr'     => $deliveryAddress,
                 'total'    => $grandTotal,
+                'pm'       => $paymentMethod,
+                'ca'       => $paymentMethod === 'CASH' ? $cashAmountRaw : null,
             ]);
             $orderId = (int) $pdo->lastInsertId();
 
@@ -262,6 +286,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
                 } catch (Throwable) { /* non-fatal */ }
             }
 
+            // ── CASH: skip Xendit, log payment locally ──
+            if ($paymentMethod === 'CASH') {
+                $pdo->prepare(
+                    "INSERT INTO payments
+                        (order_id, xendit_payment_request_id, reference_id, amount, currency,
+                         payment_method, payment_channel, status, xendit_raw_response)
+                     VALUES (:oid, '', :ref, :amt, 'PHP', 'CASH', 'CASH', 'pending', '')"
+                )->execute([
+                    'oid' => $orderId,
+                    'ref' => $referenceId,
+                    'amt' => $grandTotal,
+                ]);
+
+                $pdo->commit();
+                $_SESSION['cart'] = [];
+                $pdo->prepare('DELETE FROM customer_cart WHERE user_id = :uid')->execute(['uid' => $customerId]);
+
+                header('Location: /BreadBreak/order-confirmation.php?ref=' . urlencode($referenceId));
+                exit;
+            }
+
+            // ── E-WALLET / CARD: send to Xendit ──
+            $channelCodeMap = [
+                'GCASH'    => 'GCASH',
+                'PAYMAYA'  => 'PAYMAYA',
+                'GRABPAY'  => 'GRABPAY',
+                'SHOPEEPAY'=> 'SHOPEEPAY',
+            ];
+
             // Description for Xendit
             $descParts = array_map(fn($it) => $it['product_name'] . ' (' . $it['service_size'] . ') x' . $it['quantity'], $cartItems);
             $description = implode(', ', $descParts);
@@ -269,22 +322,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
             if ($discountType !== 'none') $description .= ' [' . strtoupper($discountType) . ' Disc]';
             if (strlen($description) > 255) $description = substr($description, 0, 252) . '...';
 
-            $xenditPayload = [
-                'reference_id'     => $referenceId,
-                'type'             => 'PAY',
-                'country'          => 'PH',
-                'currency'         => 'PHP',
-                'request_amount'   => $grandTotal,
-                'capture_method'   => 'AUTOMATIC',
-                'channel_code'     => 'GCASH',
-                'channel_properties' => [
-                    'success_return_url' => XENDIT_SUCCESS_RETURN_URL . '&ref=' . urlencode($referenceId),
-                    'failure_return_url' => XENDIT_FAILURE_RETURN_URL . '&ref=' . urlencode($referenceId),
-                    'cancel_return_url'  => XENDIT_FAILURE_RETURN_URL . '&ref=' . urlencode($referenceId),
-                ],
-                'description' => $description,
-                'metadata'    => ['order_id' => $orderId, 'source' => 'BreadBreak', 'fulfillment' => $fulfillmentType],
-            ];
+            if ($paymentMethod === 'CARD') {
+                // Credit/Debit Card via Xendit Payment Request
+                $xenditPayload = [
+                    'reference_id'   => $referenceId,
+                    'type'           => 'PAY',
+                    'country'        => 'PH',
+                    'currency'       => 'PHP',
+                    'request_amount' => $grandTotal,
+                    'capture_method' => 'AUTOMATIC',
+                    'payment_method' => [
+                        'type'        => 'CARD',
+                        'reusability' => 'ONE_TIME_USE',
+                        'card'        => [],
+                    ],
+                    'channel_properties' => [
+                        'success_return_url' => XENDIT_SUCCESS_RETURN_URL . '&ref=' . urlencode($referenceId),
+                        'failure_return_url' => XENDIT_FAILURE_RETURN_URL . '&ref=' . urlencode($referenceId),
+                        'cancel_return_url'  => XENDIT_FAILURE_RETURN_URL . '&ref=' . urlencode($referenceId),
+                    ],
+                    'description' => $description,
+                    'metadata'    => ['order_id' => $orderId, 'source' => 'BreadBreak', 'fulfillment' => $fulfillmentType],
+                ];
+                $pmLabel = 'CARD';
+                $pcLabel = 'CREDIT_CARD';
+            } else {
+                $channelCode = $channelCodeMap[$paymentMethod] ?? 'GCASH';
+                $xenditPayload = [
+                    'reference_id'     => $referenceId,
+                    'type'             => 'PAY',
+                    'country'          => 'PH',
+                    'currency'         => 'PHP',
+                    'request_amount'   => $grandTotal,
+                    'capture_method'   => 'AUTOMATIC',
+                    'channel_code'     => $channelCode,
+                    'channel_properties' => [
+                        'success_return_url' => XENDIT_SUCCESS_RETURN_URL . '&ref=' . urlencode($referenceId),
+                        'failure_return_url' => XENDIT_FAILURE_RETURN_URL . '&ref=' . urlencode($referenceId),
+                        'cancel_return_url'  => XENDIT_FAILURE_RETURN_URL . '&ref=' . urlencode($referenceId),
+                    ],
+                    'description' => $description,
+                    'metadata'    => ['order_id' => $orderId, 'source' => 'BreadBreak', 'fulfillment' => $fulfillmentType],
+                ];
+                $pmLabel = 'EWALLET';
+                $pcLabel = $channelCode;
+            }
 
             $xenditResult = xenditRequest('POST', '/v3/payment_requests', $xenditPayload);
 
@@ -301,12 +383,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
                 "INSERT INTO payments
                     (order_id, xendit_payment_request_id, reference_id, amount, currency,
                      payment_method, payment_channel, status, xendit_raw_response)
-                 VALUES (:oid, :xid, :ref, :amt, 'PHP', 'EWALLET', 'GCASH', 'pending', :raw)"
+                 VALUES (:oid, :xid, :ref, :amt, 'PHP', :pm, :pc, 'pending', :raw)"
             )->execute([
                 'oid' => $orderId,
                 'xid' => $xenditId,
                 'ref' => $referenceId,
                 'amt' => $grandTotal,
+                'pm'  => $pmLabel,
+                'pc'  => $pcLabel,
                 'raw' => json_encode($xenditBody),
             ]);
 
@@ -641,13 +725,108 @@ $pageTitle = 'Checkout | BreadBreak';
             </div>
         </div>
 
-        <!-- ── Right Column: Order Summary + GCash Payment ── -->
+            <!-- ── Payment Method Card ── -->
+            <div class="checkout-card" id="payment-method-card">
+                <div class="checkout-card-header">
+                    <h2><i class="fa-solid fa-credit-card" style="margin-right:.5rem;color:var(--accent)"></i>Payment Method</h2>
+                </div>
+                <div class="checkout-card-body">
+                    <div class="pay-method-grid" id="pay-method-grid">
+
+                        <!-- GCash -->
+                        <label class="pay-method-option is-selected" data-method="GCASH">
+                            <input type="radio" name="pay_method_radio" value="GCASH" checked hidden />
+                            <span class="pay-method-icon" style="background:#1777ff;color:#fff;"><i class="fa-solid fa-mobile-screen"></i></span>
+                            <span class="pay-method-label">GCash</span>
+                        </label>
+
+                        <!-- Maya -->
+                        <label class="pay-method-option" data-method="PAYMAYA">
+                            <input type="radio" name="pay_method_radio" value="PAYMAYA" hidden />
+                            <span class="pay-method-icon" style="background:#00c17b;color:#fff;"><i class="fa-solid fa-leaf"></i></span>
+                            <span class="pay-method-label">Maya</span>
+                        </label>
+
+                        <!-- GrabPay -->
+                        <label class="pay-method-option" data-method="GRABPAY">
+                            <input type="radio" name="pay_method_radio" value="GRABPAY" hidden />
+                            <span class="pay-method-icon" style="background:#00b14f;color:#fff;"><i class="fa-solid fa-car-side"></i></span>
+                            <span class="pay-method-label">GrabPay</span>
+                        </label>
+
+                        <!-- ShopeePay -->
+                        <label class="pay-method-option" data-method="SHOPEEPAY">
+                            <input type="radio" name="pay_method_radio" value="SHOPEEPAY" hidden />
+                            <span class="pay-method-icon" style="background:#ee4d2d;color:#fff;"><i class="fa-solid fa-bag-shopping"></i></span>
+                            <span class="pay-method-label">ShopeePay</span>
+                        </label>
+
+                        <!-- Card -->
+                        <label class="pay-method-option" data-method="CARD">
+                            <input type="radio" name="pay_method_radio" value="CARD" hidden />
+                            <span class="pay-method-icon" style="background:#5849d1;color:#fff;"><i class="fa-solid fa-credit-card"></i></span>
+                            <span class="pay-method-label">Card</span>
+                        </label>
+
+                        <!-- Cash -->
+                        <label class="pay-method-option" data-method="CASH">
+                            <input type="radio" name="pay_method_radio" value="CASH" hidden />
+                            <span class="pay-method-icon" style="background:#b8860b;color:#fff;"><i class="fa-solid fa-money-bill-wave"></i></span>
+                            <span class="pay-method-label">Cash</span>
+                        </label>
+
+                    </div>
+
+                    <!-- E-Wallet / Card hint -->
+                    <div id="pm-ewallet-hint" class="checkout-alert alert-info" style="margin-top:.9rem;font-size:.82rem;padding:.65rem .9rem;">
+                        <i class="fa-solid fa-circle-info"></i>
+                        <span id="pm-ewallet-hint-text">You'll be redirected to GCash to complete payment securely via Xendit. <strong>(TEST MODE)</strong></span>
+                    </div>
+
+                    <!-- Cash input panel -->
+                    <div id="pm-cash-panel" style="display:none;margin-top:.9rem;padding:1rem 1.1rem;background:#fdfaf6;border:1.5px solid var(--border);border-radius:12px;">
+                        <p style="font-size:.88rem;font-weight:700;color:var(--brown-900);margin:0 0 .75rem;">
+                            <i class="fa-solid fa-money-bill-wave" style="margin-right:.4rem;color:#b8860b;"></i>
+                            How much cash will you bring?
+                        </p>
+                        <!-- Quick denomination buttons -->
+                        <div style="display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.75rem;" id="cash-denom-btns">
+                            <span style="font-size:.78rem;color:var(--muted);font-weight:600;align-self:center;">Quick select:</span>
+                            <?php foreach ([20,50,100,200,500,1000] as $d): ?>
+                            <button type="button" class="cash-denom-btn" data-amount="<?php echo $d; ?>">₱<?php echo $d; ?></button>
+                            <?php endforeach; ?>
+                        </div>
+                        <label style="display:flex;flex-direction:column;gap:.35rem;font-size:.85rem;font-weight:600;color:var(--brown-800);">
+                            Cash Amount (₱) <span style="color:#c00;font-size:.78rem;font-weight:400;">Must be ≥ total and ≤ ₱5,000</span>
+                            <input type="number" id="cash-amount-input" min="1" max="5000" step="1" placeholder="e.g. 500"
+                                style="border:1.5px solid var(--border);border-radius:8px;padding:.6rem .9rem;font-family:inherit;font-size:1rem;max-width:220px;" />
+                        </label>
+                        <div id="cash-change-display" style="display:none;margin-top:.75rem;padding:.6rem .9rem;background:#e8f7ef;border:1.5px solid #a3d9bc;border-radius:10px;font-size:.92rem;font-weight:700;color:#1a6645;">
+                            <i class="fa-solid fa-coins" style="margin-right:.4rem;"></i>
+                            Your change: <span id="cash-change-amount">₱0.00</span>
+                        </div>
+                        <div id="cash-amount-error" style="display:none;margin-top:.5rem;font-size:.82rem;color:#c00;font-weight:600;"></div>
+
+                        <div class="checkout-alert" style="margin-top:.75rem;margin-bottom:0;font-size:.82rem;padding:.65rem .9rem;background:#fff3e0;border-color:#f5c842;color:#7a4200;">
+                            <i class="fa-solid fa-circle-info" style="color:#b85c00;"></i>
+                            <span>
+                                <?php if (true /* fulfillment determined by JS */): ?>
+                                <strong>Delivery:</strong> Our rider will collect your cash. <strong>Pickup:</strong> Pay at our store counter before claiming your order.
+                                <?php endif; ?>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Right Column: Order Summary + Payment ── -->
         <div class="summary-panel">
             <div class="summary-panel-header">
                 <h2>Order Summary</h2>
             </div>
             <div class="summary-panel-body">
-                <div class="payment-channel-badge">
+                <div class="payment-channel-badge" id="payment-badge-display">
                     <i class="fa-solid fa-mobile-screen"></i> Pay via GCash (TEST MODE)
                 </div>
 
@@ -696,9 +875,9 @@ $pageTitle = 'Checkout | BreadBreak';
                     <span class="summary-total-amount" id="summary-grand-total">₱<?php echo number_format($cartTotal, 2); ?></span>
                 </div>
 
-                <p class="summary-note">
+                <p class="summary-note" id="summary-payment-note">
                     <i class="fa-solid fa-lock" style="margin-right:.35rem;"></i>
-                    Prices and taxes are verified from our database. You will be redirected to Xendit's secure GCash payment gateway.
+                    Prices and taxes are verified from our database. You will be redirected to GCash to complete payment securely via Xendit.
                 </p>
             </div>
             <div class="summary-panel-footer">
@@ -717,9 +896,13 @@ $pageTitle = 'Checkout | BreadBreak';
                     <input type="hidden" name="discount_id_number" id="hidden-discount-id-number" value="" />
                     <input type="hidden" name="discount_name" id="hidden-discount-name" value="" />
 
+                    <!-- Hidden payment fields -->
+                    <input type="hidden" name="payment_method" id="hidden-payment-method" value="GCASH" />
+                    <input type="hidden" name="cash_amount" id="hidden-cash-amount" value="" />
+
                     <button class="btn btn-primary" type="submit" id="place-order-btn" disabled style="width:100%;font-size:1rem;padding:.9rem 1.2rem;opacity:.6;cursor:not-allowed;">
-                        <i class="fa-solid fa-mobile-screen" style="margin-right:.5rem;"></i>
-                        Confirm &amp; Pay via GCash
+                        <i class="fa-solid fa-mobile-screen" style="margin-right:.5rem;" id="place-order-btn-icon"></i>
+                        <span id="place-order-btn-text">Confirm &amp; Pay via GCash</span>
                     </button>
                     <p id="place-order-hint" style="font-size:.8rem;color:var(--muted);text-align:center;margin-top:.5rem;">
                         Enter your delivery address to continue.
@@ -949,6 +1132,25 @@ $pageTitle = 'Checkout | BreadBreak';
             }
             if (!nameRes.valid) {
                 setOrderButton(false, nameRes.msg);
+                return false;
+            }
+        }
+
+        // 3. Cash payment: need valid cash amount
+        if (typeof currentPayMethod !== 'undefined' && currentPayMethod === 'CASH') {
+            const total = getCurrentGrandTotal ? getCurrentGrandTotal() : 0;
+            const cashVal = parseFloat(hiddenCashAmount ? hiddenCashAmount.value : 0) || 0;
+            if (!cashVal || cashVal <= 0) {
+                setOrderButton(false, 'Please enter the cash amount you will bring.');
+                return false;
+            }
+            if (cashVal < total) {
+                setOrderButton(false, 'Cash amount must be at least ₱' + total.toLocaleString('en-PH', {minimumFractionDigits:2}) + '.');
+                return false;
+            }
+            const maxA = Math.min(total * 3, 5000);
+            if (cashVal > maxA) {
+                setOrderButton(false, 'Cash amount is too large. Max: ₱' + maxA.toLocaleString('en-PH', {minimumFractionDigits:2}) + '.');
                 return false;
             }
         }
@@ -1290,6 +1492,168 @@ $pageTitle = 'Checkout | BreadBreak';
             else setOrderButton(false, 'Enter your delivery address to continue.');
         }
     }
+
+    // ── Payment Method Selector ───────────────────────────────────────────────
+    const payMethodOptions  = document.querySelectorAll('.pay-method-option');
+    const hiddenPayMethod   = document.getElementById('hidden-payment-method');
+    const hiddenCashAmount  = document.getElementById('hidden-cash-amount');
+    const ewalletHint       = document.getElementById('pm-ewallet-hint');
+    const ewalletHintText   = document.getElementById('pm-ewallet-hint-text');
+    const cashPanel         = document.getElementById('pm-cash-panel');
+    const cashAmountInput   = document.getElementById('cash-amount-input');
+    const cashChangeDisplay = document.getElementById('cash-change-display');
+    const cashChangeAmount  = document.getElementById('cash-change-amount');
+    const cashAmountError   = document.getElementById('cash-amount-error');
+    const payBadgeDisplay   = document.getElementById('payment-badge-display');
+    const summaryPayNote    = document.getElementById('summary-payment-note');
+    const btnText           = document.getElementById('place-order-btn-text');
+    const btnIcon           = document.getElementById('place-order-btn-icon');
+
+    let currentPayMethod = 'GCASH';
+
+    const payMethodMeta = {
+        GCASH:     { label: 'GCash',     icon: 'fa-mobile-screen',   color: '#1777ff', btnLabel: 'Confirm & Pay via GCash',     btnIcon: 'fa-mobile-screen' },
+        PAYMAYA:   { label: 'Maya',      icon: 'fa-leaf',            color: '#00c17b', btnLabel: 'Confirm & Pay via Maya',      btnIcon: 'fa-leaf' },
+        GRABPAY:   { label: 'GrabPay',   icon: 'fa-car-side',        color: '#00b14f', btnLabel: 'Confirm & Pay via GrabPay',   btnIcon: 'fa-car-side' },
+        SHOPEEPAY: { label: 'ShopeePay', icon: 'fa-bag-shopping',    color: '#ee4d2d', btnLabel: 'Confirm & Pay via ShopeePay', btnIcon: 'fa-bag-shopping' },
+        CARD:      { label: 'Card',      icon: 'fa-credit-card',     color: '#5849d1', btnLabel: 'Confirm & Pay via Card',      btnIcon: 'fa-credit-card' },
+        CASH:      { label: 'Cash',      icon: 'fa-money-bill-wave', color: '#b8860b', btnLabel: 'Confirm Order (Cash)',         btnIcon: 'fa-money-bill-wave' },
+    };
+
+    function getCurrentGrandTotal() {
+        // Parse from the live display element
+        const raw = grandTotalEl.textContent.replace(/[₱,]/g, '').trim();
+        return parseFloat(raw) || 0;
+    }
+
+    function updatePaymentUI(method) {
+        currentPayMethod = method;
+        hiddenPayMethod.value = method;
+        const meta = payMethodMeta[method] || payMethodMeta.GCASH;
+
+        // Update summary badge
+        if (payBadgeDisplay) {
+            payBadgeDisplay.innerHTML = '<i class="fa-solid ' + meta.icon + '"></i> Pay via ' + meta.label + ' (TEST MODE)';
+        }
+
+        // Update submit button label
+        if (btnText) btnText.textContent = meta.btnLabel;
+        if (btnIcon) {
+            btnIcon.className = 'fa-solid ' + meta.btnIcon;
+            btnIcon.style.marginRight = '.5rem';
+        }
+
+        if (method === 'CASH') {
+            // Show cash panel, hide ewallet hint
+            if (ewalletHint) ewalletHint.style.display = 'none';
+            if (cashPanel)   cashPanel.style.display   = 'block';
+            if (summaryPayNote) {
+                summaryPayNote.innerHTML = '<i class="fa-solid fa-lock" style="margin-right:.35rem;"></i>Cash payment — please prepare the exact or nearest denomination. Your change will be calculated.';
+            }
+            validateCashInput();
+        } else {
+            // Hide cash panel, show ewallet hint
+            if (cashPanel)   cashPanel.style.display   = 'none';
+            if (ewalletHint) ewalletHint.style.display = 'flex';
+            hiddenCashAmount.value = '';
+            if (cashAmountInput) cashAmountInput.value = '';
+            if (cashChangeDisplay) cashChangeDisplay.style.display = 'none';
+
+            // Update hint text
+            const isCard = method === 'CARD';
+            if (ewalletHintText) {
+                ewalletHintText.innerHTML = isCard
+                    ? 'You\'ll be redirected to enter your card details securely via Xendit. <strong>(TEST MODE)</strong>'
+                    : 'You\'ll be redirected to ' + meta.label + ' to complete payment securely via Xendit. <strong>(TEST MODE)</strong>';
+            }
+            if (summaryPayNote) {
+                summaryPayNote.innerHTML = '<i class="fa-solid fa-lock" style="margin-right:.35rem;"></i>Prices and taxes are verified from our database. You will be redirected to ' + meta.label + ' to complete payment securely via Xendit.';
+            }
+            updateOrderButtonState();
+        }
+    }
+
+    function validateCashInput() {
+        if (currentPayMethod !== 'CASH') return true;
+        const total = getCurrentGrandTotal();
+        const val = parseFloat(cashAmountInput ? cashAmountInput.value : 0) || 0;
+
+        if (cashAmountError) cashAmountError.style.display = 'none';
+        if (cashChangeDisplay) cashChangeDisplay.style.display = 'none';
+
+        if (!val || val <= 0) {
+            hiddenCashAmount.value = '';
+            setOrderButton(false, 'Please enter the cash amount you will bring.');
+            return false;
+        }
+        if (val < total) {
+            if (cashAmountError) {
+                cashAmountError.textContent = 'Cash amount is less than the total (₱' + total.toLocaleString('en-PH', {minimumFractionDigits:2}) + '). Please enter a higher amount.';
+                cashAmountError.style.display = 'block';
+            }
+            hiddenCashAmount.value = '';
+            setOrderButton(false, 'Cash amount must be at least ₱' + total.toLocaleString('en-PH', {minimumFractionDigits:2}) + '.');
+            return false;
+        }
+        const maxAllowed = Math.min(total * 3, 5000);
+        if (val > maxAllowed) {
+            if (cashAmountError) {
+                cashAmountError.textContent = 'Cash amount is too large (max ₱' + maxAllowed.toLocaleString('en-PH', {minimumFractionDigits:2}) + ' for this order). Please enter the actual denomination you will bring.';
+                cashAmountError.style.display = 'block';
+            }
+            hiddenCashAmount.value = '';
+            setOrderButton(false, 'Cash amount is too large. Max: ₱' + maxAllowed.toLocaleString('en-PH', {minimumFractionDigits:2}) + '.');
+            return false;
+        }
+
+        // Valid cash amount
+        const change = val - total;
+        hiddenCashAmount.value = val;
+        if (cashChangeDisplay) {
+            cashChangeDisplay.style.display = 'flex';
+            cashChangeDisplay.style.alignItems = 'center';
+        }
+        if (cashChangeAmount) {
+            cashChangeAmount.textContent = '₱' + change.toLocaleString('en-PH', {minimumFractionDigits:2});
+        }
+
+        // Still need address/fulfillment check
+        return updateOrderButtonState();
+    }
+
+    // Wire up pill clicks
+    payMethodOptions.forEach(function (label) {
+        label.addEventListener('click', function () {
+            payMethodOptions.forEach(l => l.classList.remove('is-selected'));
+            this.classList.add('is-selected');
+            const method = this.dataset.method;
+            updatePaymentUI(method);
+        });
+    });
+
+    // Quick denomination buttons
+    document.querySelectorAll('.cash-denom-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            if (cashAmountInput) {
+                cashAmountInput.value = this.dataset.amount;
+                validateCashInput();
+            }
+        });
+    });
+
+    // Cash amount live input
+    if (cashAmountInput) {
+        cashAmountInput.addEventListener('input', validateCashInput);
+        cashAmountInput.addEventListener('blur', validateCashInput);
+    }
+
+    // Re-validate cash when total changes (discount toggle)
+    const origRecalc = recalculateTotal;
+    // We patch into post-recalculate by overriding updateSummaryFee
+    const origUpdateSummaryFee = updateSummaryFee;
+
+    // Initialize payment UI
+    updatePaymentUI('GCASH');
 })();
 </script>
 </body>
