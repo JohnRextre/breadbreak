@@ -617,9 +617,9 @@ p {
 .account-panel-heading { padding-bottom: 1.2rem; border-bottom: 1px solid var(--border); }
 .account-panel-heading h2 { margin-bottom: .35rem; font-size: 1.5rem; }
 .account-panel-heading p { margin: 0; font-size: .85rem; }
-.account-form { display: grid; gap: 1rem; padding-top: 1.25rem; }
-.account-form > label { display: grid; gap: .4rem; color: var(--brown-700); font-size: .78rem; font-weight: 700; }
-.account-form input { width: 100%; min-height: 43px; padding: .7rem .8rem; border: 1px solid #ded6d0; border-radius: 8px; color: var(--brown-900); background: #fff; font: inherit; font-size: .85rem; }
+.account-form input:not([type="checkbox"]):not([type="radio"]) { width: 100%; min-height: 43px; padding: .7rem .8rem; border: 1px solid #ded6d0; border-radius: 8px; color: var(--brown-900); background: #fff; font: inherit; font-size: .85rem; }
+.account-form input[type="checkbox"],
+.account-form input[type="radio"] { width: 18px !important; height: 18px !important; min-height: 18px !important; max-height: 18px !important; margin: 0 !important; padding: 0 !important; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; display: inline-block; }
 .account-form input[readonly] { background: #faf7f4; }
 .account-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .account-form-grid label { display: grid; gap: .4rem; color: var(--brown-700); font-size: .78rem; font-weight: 700; }

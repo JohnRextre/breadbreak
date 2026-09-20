@@ -291,10 +291,10 @@ require __DIR__ . '/../includes/header.php';
                                     Postal Code
                                     <input type="text" name="addr_postal" placeholder="3015" maxlength="20" />
                                 </label>
-                                <label style="grid-column:1/-1;flex-direction:row;align-items:center;gap:.6rem;cursor:pointer;">
-                                    <input type="checkbox" name="addr_is_default" value="1" <?php echo empty($savedAddresses) ? 'checked' : ''; ?> style="width:auto;margin:0;" />
-                                    <span>Set as my default address</span>
-                                </label>
+                                <div style="grid-column:1/-1;display:flex;align-items:center;gap:.6rem;margin-top:.4rem;cursor:pointer;">
+                                    <input type="checkbox" id="addr_is_default" name="addr_is_default" value="1" <?php echo empty($savedAddresses) ? 'checked' : ''; ?> />
+                                    <label for="addr_is_default" style="display:inline;font-size:.88rem;font-weight:600;color:var(--brown-700);cursor:pointer;margin:0;">Set as my default address</label>
+                                </div>
                             </div>
                             <!-- Zone check result for new address -->
                             <div id="addr-zone-result" class="zone-check-result" style="display:none;margin-top:.5rem;" aria-live="polite"></div>
