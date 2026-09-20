@@ -1114,3 +1114,249 @@ p {
         width: 100%;
     }
 }
+
+/* ==========================================================================
+   Customer Address Cards  (My Account — My Addresses section)
+   ========================================================================== */
+.address-list {
+    display: flex;
+    flex-direction: column;
+    gap: .85rem;
+    margin-bottom: 1.5rem;
+}
+
+.address-card {
+    background: #fff;
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    padding: 1.1rem 1.3rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    flex-wrap: wrap;
+    transition: border-color .15s;
+}
+
+.address-card-default {
+    border-color: var(--accent);
+    background: #fdf8f3;
+}
+
+.address-card-label-row {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    flex-wrap: wrap;
+    margin-bottom: .35rem;
+}
+
+.address-card-label {
+    font-weight: 700;
+    color: var(--brown-900);
+    font-size: .95rem;
+    display: flex;
+    align-items: center;
+    gap: .35rem;
+}
+
+.address-card-label i {
+    color: var(--accent);
+}
+
+.address-default-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: .25rem;
+    background: #fff3e0;
+    color: #b85c00;
+    border: 1px solid #f5c842;
+    border-radius: 100px;
+    font-size: .78rem;
+    font-weight: 700;
+    padding: .15rem .6rem;
+}
+
+.address-card-text {
+    font-size: .93rem;
+    color: var(--text);
+    margin: 0;
+    line-height: 1.5;
+}
+
+.address-card-meta {
+    font-size: .82rem;
+    color: var(--muted);
+    margin: .2rem 0 0;
+}
+
+.address-card-top { flex: 1; min-width: 0; }
+
+.address-card-actions {
+    display: flex;
+    gap: .5rem;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    flex-shrink: 0;
+}
+
+.addr-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text);
+    font-size: .82rem;
+    font-weight: 600;
+    padding: .38rem .8rem;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+    font-family: inherit;
+}
+
+.addr-btn-default {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.addr-btn-default:hover {
+    background: #fdf8f3;
+}
+
+.addr-btn-remove {
+    border-color: #f5a3a3;
+    color: #891515;
+}
+
+.addr-btn-remove:hover {
+    background: #fde8e8;
+}
+
+.address-empty {
+    text-align: center;
+    padding: 2rem 1rem;
+    color: var(--muted);
+    background: var(--cream);
+    border-radius: 14px;
+    border: 1.5px dashed var(--border);
+    margin-bottom: 1.2rem;
+}
+
+.address-empty i {
+    font-size: 2rem;
+    margin-bottom: .6rem;
+    display: block;
+    color: var(--brown-300);
+}
+
+.address-empty p { margin: 0; font-size: .92rem; }
+
+.address-add-wrap {
+    margin-top: 0;
+}
+
+.addr-add-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: .45rem;
+    border: 1.5px dashed var(--accent);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--accent);
+    font-size: .88rem;
+    font-weight: 600;
+    padding: .65rem 1.2rem;
+    cursor: pointer;
+    font-family: inherit;
+    width: 100%;
+    justify-content: center;
+    transition: background .15s;
+}
+
+.addr-add-toggle:hover { background: #fdf8f3; }
+
+.address-add-form {
+    margin-top: .75rem;
+    background: var(--cream);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    padding: 1.3rem 1.4rem;
+}
+
+/* ==========================================================================
+   Saved Address Picker  (Checkout page)
+   ========================================================================== */
+.saved-address-list {
+    display: flex;
+    flex-direction: column;
+    gap: .7rem;
+    margin-bottom: .5rem;
+}
+
+.saved-address-card {
+    display: flex;
+    align-items: flex-start;
+    gap: .85rem;
+    border: 2px solid var(--border);
+    border-radius: 14px;
+    padding: .95rem 1.1rem;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+    background: #fff;
+    position: relative;
+}
+
+.saved-address-card input[type="radio"] {
+    margin-top: .2rem;
+    flex-shrink: 0;
+    accent-color: var(--accent);
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.saved-address-card.is-checked {
+    border-color: var(--accent);
+    background: #fdf8f3;
+}
+
+.saved-address-card:hover { border-color: var(--accent); }
+
+.saved-address-card-body { flex: 1; min-width: 0; }
+
+.saved-address-card-label {
+    font-weight: 700;
+    font-size: .9rem;
+    color: var(--brown-900);
+    display: flex;
+    align-items: center;
+    gap: .4rem;
+    margin-bottom: .25rem;
+    flex-wrap: wrap;
+}
+
+.saved-address-card-label i { color: var(--accent); }
+
+.saved-address-card-text {
+    font-size: .88rem;
+    color: var(--text);
+    line-height: 1.45;
+    margin: 0;
+}
+
+.saved-address-card-meta {
+    font-size: .8rem;
+    color: var(--muted);
+    margin-top: .15rem;
+}
+
+.saved-address-zone-status {
+    margin-top: .35rem;
+}
+
+.zone-checking {
+    font-size: .8rem;
+    color: var(--muted);
+}

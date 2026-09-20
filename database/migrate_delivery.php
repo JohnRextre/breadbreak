@@ -18,6 +18,25 @@ function runStep(PDO $pdo, string $label, string $sql): void {
     }
 }
 
+// ── 0. customer_addresses ─────────────────────────────────────────────────────
+runStep($pdo, 'Create customer_addresses table', "
+    CREATE TABLE IF NOT EXISTS customer_addresses (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        customer_id INT NOT NULL,
+        label VARCHAR(60) NOT NULL DEFAULT 'Home',
+        full_address TEXT NOT NULL,
+        barangay VARCHAR(100) NOT NULL DEFAULT '',
+        city VARCHAR(100) NOT NULL DEFAULT '',
+        province VARCHAR(100) NOT NULL DEFAULT '',
+        postal_code VARCHAR(20) NOT NULL DEFAULT '',
+        is_default TINYINT(1) NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_addr_customer (customer_id),
+        CONSTRAINT fk_addr_customer FOREIGN KEY (customer_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+");
+
 // ── 1. delivery_settings ──────────────────────────────────────────────────────
 runStep($pdo, 'Create delivery_settings table', "
     CREATE TABLE IF NOT EXISTS delivery_settings (

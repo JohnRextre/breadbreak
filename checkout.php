@@ -375,28 +375,97 @@ $pageTitle = 'Checkout | BreadBreak';
                     <h2><i class="fa-solid fa-location-dot" style="margin-right:.5rem;color:var(--accent)"></i>Delivery Address</h2>
                 </div>
                 <div class="checkout-card-body">
+
+                <?php
+                // Load customer's saved addresses
+                $savedAddressStmt = $pdo->prepare(
+                    'SELECT id, label, full_address, barangay, city, province, postal_code, is_default
+                     FROM customer_addresses WHERE customer_id = :cid ORDER BY is_default DESC, created_at ASC'
+                );
+                $hasSavedAddresses = false;
+                try {
+                    $savedAddressStmt->execute(['cid' => $customerId]);
+                    $savedAddresses = $savedAddressStmt->fetchAll();
+                    $hasSavedAddresses = !empty($savedAddresses);
+                } catch (Throwable) {
+                    $savedAddresses = [];
+                }
+                ?>
+
+                <?php if ($hasSavedAddresses): ?>
+                    <!-- Saved address radio cards -->
+                    <p style="font-size:.88rem;color:var(--muted);margin:0 0 1rem;">Select your delivery address or use a different one below.</p>
+                    <div class="saved-address-list" id="saved-address-list">
+                    <?php foreach ($savedAddresses as $i => $addr):
+                        $addrText = $addr['full_address'];
+                        $addrMeta = implode(', ', array_filter([$addr['barangay'], $addr['city'], $addr['province']]));
+                    ?>
+                        <label class="saved-address-card<?php echo $addr['is_default'] ? ' is-checked' : ''; ?>" data-address-card>
+                            <input type="radio" name="saved_address_radio"
+                                value="<?php echo htmlspecialchars($addrText . ($addrMeta ? ', ' . $addrMeta : '')); ?>"
+                                data-address-radio
+                                <?php echo $addr['is_default'] ? 'checked' : ''; ?> />
+                            <div class="saved-address-card-body">
+                                <div class="saved-address-card-label">
+                                    <i class="fa-solid fa-location-dot"></i>
+                                    <?php echo htmlspecialchars($addr['label']); ?>
+                                    <?php if ($addr['is_default']): ?>
+                                        <span class="address-default-badge" style="font-size:.72rem;"><i class="fa-solid fa-star"></i> Default</span>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="saved-address-card-text"><?php echo htmlspecialchars($addrText); ?></div>
+                                <?php if ($addrMeta): ?>
+                                    <div class="saved-address-card-meta"><?php echo htmlspecialchars($addrMeta); ?></div>
+                                <?php endif; ?>
+                                <div class="saved-address-zone-status" id="zone-status-<?php echo $addr['id']; ?>">
+                                    <span class="zone-checking"><i class="fa-solid fa-spinner fa-spin"></i> Checking zone…</span>
+                                </div>
+                            </div>
+                        </label>
+                    <?php endforeach; ?>
+                    </div>
+
+                    <!-- Use different address toggle -->
+                    <div style="margin-top:1rem;">
+                        <button type="button" class="addr-btn addr-btn-default" id="use-other-addr-toggle" style="width:100%;justify-content:center;">
+                            <i class="fa-solid fa-plus" style="margin-right:.4rem;"></i> Use a different address
+                        </button>
+                        <div id="other-addr-wrap" style="display:none;margin-top:.85rem;">
+                            <label class="delivery-address-label" for="delivery-address-input">
+                                One-time Delivery Address <span style="color:#c00;">*</span>
+                            </label>
+                            <textarea id="delivery-address-input" name="delivery_address_display" class="delivery-address-textarea" rows="3"
+                                placeholder="e.g. Blk 5 Lot 3, Ilang-Ilang, Guiguinto, Bulacan, 3015"
+                            ></textarea>
+                            <div id="zone-check-result" class="zone-check-result" aria-live="polite" style="display:none;"></div>
+                        </div>
+                    </div>
+
+                    <p style="font-size:.8rem;color:var(--muted);margin-top:.75rem;">
+                        <i class="fa-solid fa-circle-info" style="margin-right:.3rem;"></i>
+                        You can manage your saved addresses in <a href="/BreadBreak/customer/account.php" style="color:var(--accent);">My Account</a>.
+                    </p>
+
+                <?php else: ?>
+                    <!-- No saved addresses — free-text input -->
                     <p style="font-size:.88rem;color:var(--muted);margin:0 0 1rem;">
-                        Enter your full delivery address including barangay and city. We currently deliver within 8km of our branch in Estrella Village, Guiguinto, Bulacan.
+                        Enter your full delivery address. We deliver within 8km of our branch in Estrella Village, Guiguinto, Bulacan.
+                        <a href="/BreadBreak/customer/account.php" style="color:var(--accent);white-space:nowrap;"><i class="fa-solid fa-location-dot" style="margin-right:.2rem;"></i>Save addresses</a> in My Account for faster checkout.
                     </p>
                     <label class="delivery-address-label" for="delivery-address-input">
                         Delivery Address <span style="color:#c00;">*</span>
                     </label>
-                    <textarea
-                        id="delivery-address-input"
-                        name="delivery_address_display"
-                        class="delivery-address-textarea"
-                        rows="3"
+                    <textarea id="delivery-address-input" name="delivery_address_display" class="delivery-address-textarea" rows="3"
                         placeholder="e.g. Blk 5 Lot 3, Ilang-Ilang, Guiguinto, Bulacan, 3015"
                         required
                     ><?php echo htmlspecialchars($_POST['delivery_address'] ?? ''); ?></textarea>
-
-                    <!-- Zone check result banner -->
                     <div id="zone-check-result" class="zone-check-result" aria-live="polite" style="display:none;"></div>
-
                     <p style="font-size:.8rem;color:var(--muted);margin-top:.6rem;">
                         <i class="fa-solid fa-circle-info" style="margin-right:.3rem;"></i>
                         We'll check if your address is within our delivery zone.
                     </p>
+                <?php endif; ?>
+
                 </div>
             </div>
         </div>
@@ -473,149 +542,259 @@ $pageTitle = 'Checkout | BreadBreak';
 (function () {
     'use strict';
 
-    const addressInput   = document.getElementById('delivery-address-input');
-    const resultBox      = document.getElementById('zone-check-result');
-    const placeOrderBtn  = document.getElementById('place-order-btn');
-    const placeOrderHint = document.getElementById('place-order-hint');
-    const hiddenAddr     = document.getElementById('hidden-delivery-address');
-    const hiddenFee      = document.getElementById('hidden-delivery-fee');
-    const feeDisplay     = document.getElementById('summary-delivery-fee');
-    const grandTotal     = document.getElementById('summary-grand-total');
-    const cartSubtotal   = <?php echo json_encode($cartTotal); ?>;
+    // ── DOM refs ──────────────────────────────────────────────────────────────
+    const placeOrderBtn   = document.getElementById('place-order-btn');
+    const placeOrderHint  = document.getElementById('place-order-hint');
+    const hiddenAddr      = document.getElementById('hidden-delivery-address');
+    const hiddenFee       = document.getElementById('hidden-delivery-fee');
+    const feeDisplay      = document.getElementById('summary-delivery-fee');
+    const grandTotalEl    = document.getElementById('summary-grand-total');
+    const cartSubtotal    = <?php echo json_encode($cartTotal); ?>;
+
+    // Saved address mode elements
+    const savedAddrList   = document.getElementById('saved-address-list');
+    const radios          = savedAddrList ? savedAddrList.querySelectorAll('[data-address-radio]') : [];
+    const addrCards       = savedAddrList ? savedAddrList.querySelectorAll('[data-address-card]') : [];
+    const useOtherToggle  = document.getElementById('use-other-addr-toggle');
+    const otherAddrWrap   = document.getElementById('other-addr-wrap');
+
+    // Free-text mode elements
+    const addrTextarea    = document.getElementById('delivery-address-input');
+    const resultBox       = document.getElementById('zone-check-result');
 
     let checkTimer = null;
     let lastChecked = '';
+    let usingOtherAddr = false;
 
+    // ── Helpers ───────────────────────────────────────────────────────────────
     function formatPHP(amount) {
-        return '₱' + amount.toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        return '₱' + amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
     function updateSummary(fee) {
         if (fee === null) {
             feeDisplay.textContent = '—';
             feeDisplay.style.color = 'var(--muted)';
-            grandTotal.textContent = formatPHP(cartSubtotal);
+            grandTotalEl.textContent = formatPHP(cartSubtotal);
         } else if (fee === 0) {
             feeDisplay.textContent = 'Free';
             feeDisplay.style.color = '#1a6645';
-            grandTotal.textContent = formatPHP(cartSubtotal);
+            grandTotalEl.textContent = formatPHP(cartSubtotal);
         } else {
             feeDisplay.textContent = formatPHP(fee);
             feeDisplay.style.color = 'var(--text)';
-            grandTotal.textContent = formatPHP(cartSubtotal + fee);
+            grandTotalEl.textContent = formatPHP(cartSubtotal + fee);
         }
-    }
-
-    function showResult(type, message) {
-        // type: 'loading' | 'allowed' | 'blocked' | 'warning'
-        resultBox.style.display = 'flex';
-        resultBox.className = 'zone-check-result zone-' + type;
-        const icons = {
-            loading : 'fa-spinner fa-spin',
-            allowed : 'fa-circle-check',
-            blocked : 'fa-circle-xmark',
-            warning : 'fa-triangle-exclamation',
-        };
-        resultBox.innerHTML =
-            '<i class="fa-solid ' + (icons[type] || 'fa-info') + '"></i>' +
-            '<span>' + message + '</span>';
     }
 
     function setOrderButton(enabled, hint) {
         placeOrderBtn.disabled = !enabled;
-        placeOrderBtn.style.opacity  = enabled ? '1'    : '.6';
-        placeOrderBtn.style.cursor   = enabled ? 'pointer' : 'not-allowed';
-        placeOrderHint.textContent = hint || '';
+        placeOrderBtn.style.opacity = enabled ? '1' : '.6';
+        placeOrderBtn.style.cursor  = enabled ? 'pointer' : 'not-allowed';
+        placeOrderHint.textContent  = hint || '';
     }
 
-    async function checkZone(address) {
-        if (address === lastChecked) return;
-        lastChecked = address;
+    function showInlineResult(box, type, message) {
+        if (!box) return;
+        box.style.display = 'flex';
+        box.className = 'zone-check-result zone-' + type;
+        const icons = { loading:'fa-spinner fa-spin', allowed:'fa-circle-check', blocked:'fa-circle-xmark', warning:'fa-triangle-exclamation' };
+        box.innerHTML = '<i class="fa-solid ' + (icons[type] || 'fa-info') + '"></i><span>' + message + '</span>';
+    }
 
-        showResult('loading', 'Checking delivery availability…');
-        setOrderButton(false, 'Checking your address…');
-        updateSummary(null);
-
+    // ── Zone check API call ───────────────────────────────────────────────────
+    async function checkZone(address, onResult) {
         try {
             const resp = await fetch('/BreadBreak/api/delivery/check-address.php', {
-                method  : 'POST',
-                headers : { 'Content-Type': 'application/json' },
-                body    : JSON.stringify({ address }),
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ address }),
             });
-
-            if (!resp.ok) throw new Error('Server error ' + resp.status);
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const data = await resp.json();
-
-            hiddenAddr.value = address;
-
-            if (data.allowed) {
-                const fee = data.delivery_fee ?? 0;
-                hiddenFee.value = fee;
-                updateSummary(fee);
-
-                const extraInfo = data.distance_km
-                    ? ` · ${data.distance_km} km driving`
-                    : '';
-                showResult('allowed', (data.message || 'Delivery available.') + extraInfo);
-
-                // Show drive warning separately if present
-                if (data.drive_warning) {
-                    showResult('warning', data.drive_warning);
-                }
-
-                // Min order check
-                if (data.min_order && cartSubtotal < data.min_order) {
-                    showResult('blocked',
-                        `Minimum order of ₱${data.min_order.toLocaleString()} required for this zone. Your current subtotal is ${formatPHP(cartSubtotal)}.`
-                    );
-                    setOrderButton(false, 'Minimum order not met for your zone.');
-                } else {
-                    setOrderButton(true, '');
-                }
-            } else {
-                hiddenFee.value = 0;
-                updateSummary(null);
-                showResult('blocked', data.message || "Sorry, we don't deliver to your area yet.");
-                setOrderButton(false, 'Delivery not available to your address.');
-            }
+            onResult(data);
         } catch (err) {
-            // Network error — fail open (allow order, flag for manual review)
-            console.error('Zone check error:', err);
-            hiddenAddr.value = address;
-            hiddenFee.value  = 0;
-            updateSummary(0);
-            showResult('warning', 'Unable to verify your address right now. You may still place your order and our team will confirm delivery.');
-            setOrderButton(true, '');
+            onResult({ allowed: true, delivery_fee: 0, min_order: 0, message: 'Unable to verify zone. Order will be reviewed by staff.', _error: true });
         }
     }
 
-    // Debounce: check 800ms after user stops typing
-    addressInput.addEventListener('input', function () {
-        const val = this.value.trim();
-        clearTimeout(checkTimer);
-        if (val.length < 5) {
-            resultBox.style.display = 'none';
-            setOrderButton(false, 'Enter your delivery address to continue.');
+    // ── SAVED ADDRESS MODE ────────────────────────────────────────────────────
+    if (savedAddrList && radios.length > 0) {
+
+        // Pre-check all addresses on page load
+        const addressData = <?php
+            $addrJsonList = array_map(fn($a) => [
+                'id'   => $a['id'],
+                'text' => $a['full_address'] . (
+                    ($m = implode(', ', array_filter([$a['barangay'], $a['city'], $a['province']])))
+                    ? ', ' . $m : ''
+                ),
+            ], $savedAddresses ?? []);
+            echo json_encode($addrJsonList);
+        ?>;
+
+        let checkedCount = 0;
+
+        addressData.forEach(function (addr) {
+            const statusEl = document.getElementById('zone-status-' + addr.id);
+            checkZone(addr.text, function (data) {
+                checkedCount++;
+                if (statusEl) {
+                    if (data.allowed) {
+                        const fee = data.delivery_fee > 0 ? ' · ' + formatPHP(data.delivery_fee) + ' delivery fee' : ' · Free delivery';
+                        statusEl.innerHTML = '<span style="color:#1a6645;font-size:.8rem;"><i class="fa-solid fa-circle-check"></i> ' + (data.message || 'Delivery available') + fee + '</span>';
+                    } else {
+                        statusEl.innerHTML = '<span style="color:#891515;font-size:.8rem;"><i class="fa-solid fa-circle-xmark"></i> Outside delivery zone</span>';
+                    }
+                    // Store zone data on the radio input
+                    const radio = savedAddrList.querySelector('[data-address-radio][value="' + CSS.escape(addr.text) + '"]') ||
+                                  [...radios].find(r => r.value === addr.text);
+                    if (radio) {
+                        radio.dataset.zoneAllowed = data.allowed ? '1' : '0';
+                        radio.dataset.zoneFee     = data.delivery_fee ?? 0;
+                        radio.dataset.zoneMinOrder= data.min_order ?? 0;
+                    }
+                }
+                // After all checked, init based on currently selected radio
+                if (checkedCount === addressData.length) {
+                    applySelectedRadio();
+                }
+            });
+        });
+
+        function applySelectedRadio() {
+            if (usingOtherAddr) return;
+            const checked = [...radios].find(r => r.checked);
+            if (!checked) { setOrderButton(false, 'Select a delivery address to continue.'); return; }
+
+            // Update card styles
+            addrCards.forEach(c => c.classList.remove('is-checked'));
+            if (checked.closest('[data-address-card]')) checked.closest('[data-address-card]').classList.add('is-checked');
+
+            const allowed  = checked.dataset.zoneAllowed;
+            const fee      = parseInt(checked.dataset.zoneFee ?? 0, 10);
+            const minOrder = parseInt(checked.dataset.zoneMinOrder ?? 0, 10);
+
+            if (allowed === undefined) {
+                // Still loading
+                setOrderButton(false, 'Checking delivery zone…');
+                updateSummary(null);
+                return;
+            }
+            if (allowed === '0') {
+                hiddenFee.value  = 0;
+                hiddenAddr.value = '';
+                updateSummary(null);
+                setOrderButton(false, 'This address is outside our delivery zone.');
+                return;
+            }
+            if (minOrder > 0 && cartSubtotal < minOrder) {
+                hiddenFee.value  = 0;
+                hiddenAddr.value = '';
+                updateSummary(null);
+                setOrderButton(false, 'Minimum order of ₱' + minOrder.toLocaleString() + ' required for this zone.');
+                return;
+            }
+            hiddenAddr.value = checked.value;
+            hiddenFee.value  = fee;
+            updateSummary(fee);
+            setOrderButton(true, '');
+        }
+
+        radios.forEach(function (radio) {
+            radio.addEventListener('change', function () {
+                usingOtherAddr = false;
+                if (otherAddrWrap) otherAddrWrap.style.display = 'none';
+                if (useOtherToggle) useOtherToggle.innerHTML = '<i class="fa-solid fa-plus" style="margin-right:.4rem;"></i> Use a different address';
+                applySelectedRadio();
+            });
+        });
+
+        // "Use a different address" toggle
+        if (useOtherToggle && otherAddrWrap) {
+            useOtherToggle.addEventListener('click', function () {
+                usingOtherAddr = !usingOtherAddr;
+                otherAddrWrap.style.display = usingOtherAddr ? 'block' : 'none';
+                useOtherToggle.innerHTML = usingOtherAddr
+                    ? '<i class="fa-solid fa-chevron-up" style="margin-right:.4rem;"></i> Cancel — use saved address'
+                    : '<i class="fa-solid fa-plus" style="margin-right:.4rem;"></i> Use a different address';
+                if (!usingOtherAddr) {
+                    // Revert to radio selection
+                    radios.forEach(r => { if (r.checked) r.dispatchEvent(new Event('change')); });
+                } else {
+                    // Uncheck all radios, reset button
+                    radios.forEach(r => r.checked = false);
+                    addrCards.forEach(c => c.classList.remove('is-checked'));
+                    hiddenAddr.value = '';
+                    hiddenFee.value = 0;
+                    updateSummary(null);
+                    setOrderButton(false, 'Enter your delivery address to continue.');
+                    if (resultBox) resultBox.style.display = 'none';
+                    lastChecked = '';
+                    if (addrTextarea) addrTextarea.focus();
+                }
+            });
+        }
+
+        // Init: trigger apply after a tick (zone checks may still be loading)
+        setTimeout(applySelectedRadio, 100);
+    }
+
+    // ── FREE-TEXT MODE (no saved addresses, OR "other address") ──────────────
+    if (addrTextarea) {
+        async function runFreeTextCheck(address) {
+            if (address === lastChecked) return;
+            lastChecked = address;
+            if (resultBox) showInlineResult(resultBox, 'loading', 'Checking delivery availability…');
+            setOrderButton(false, 'Checking your address…');
             updateSummary(null);
-            lastChecked = '';
-            return;
-        }
-        checkTimer = setTimeout(() => checkZone(val), 800);
-    });
 
-    // Also check on blur (in case user pastes and tabs away)
-    addressInput.addEventListener('blur', function () {
-        const val = this.value.trim();
-        if (val.length >= 5) {
+            await checkZone(address, function (data) {
+                hiddenAddr.value = address;
+                if (data.allowed) {
+                    const fee = data.delivery_fee ?? 0;
+                    hiddenFee.value = fee;
+                    updateSummary(fee);
+                    if (resultBox) showInlineResult(resultBox, data.drive_warning ? 'warning' : 'allowed', data.message || 'Delivery available.');
+                    if (data.min_order && cartSubtotal < data.min_order) {
+                        if (resultBox) showInlineResult(resultBox, 'blocked', 'Minimum order of ₱' + data.min_order.toLocaleString() + ' required for this zone.');
+                        setOrderButton(false, 'Minimum order not met for your zone.');
+                    } else {
+                        setOrderButton(true, '');
+                    }
+                } else {
+                    hiddenFee.value = 0;
+                    updateSummary(null);
+                    if (resultBox) showInlineResult(resultBox, 'blocked', data.message || "Sorry, we don't deliver to your area yet.");
+                    setOrderButton(false, 'Delivery not available to this address.');
+                }
+            });
+        }
+
+        addrTextarea.addEventListener('input', function () {
+            const val = this.value.trim();
             clearTimeout(checkTimer);
-            checkZone(val);
-        }
-    });
+            if (val.length < 5) {
+                if (resultBox) resultBox.style.display = 'none';
+                if (!savedAddrList) setOrderButton(false, 'Enter your delivery address to continue.');
+                updateSummary(null);
+                lastChecked = '';
+                return;
+            }
+            checkTimer = setTimeout(() => runFreeTextCheck(val), 800);
+        });
 
-    // Pre-fill if coming back after server error
-    const prefilled = addressInput.value.trim();
-    if (prefilled.length >= 5) {
-        checkZone(prefilled);
+        addrTextarea.addEventListener('blur', function () {
+            const val = this.value.trim();
+            if (val.length >= 5) { clearTimeout(checkTimer); runFreeTextCheck(val); }
+        });
+
+        // Pre-fill check on load (no saved addresses path)
+        if (!savedAddrList) {
+            const prefilled = addrTextarea.value.trim();
+            if (prefilled.length >= 5) runFreeTextCheck(prefilled);
+            else setOrderButton(false, 'Enter your delivery address to continue.');
+        }
     }
 })();
 </script>
