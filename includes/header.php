@@ -22,6 +22,8 @@ $navItems = [
     ['label' => 'About Us', 'href' => '/BreadBreak/about.php', 'page' => 'about.php'],
     ['label' => 'Contact', 'href' => '/BreadBreak/contact.php', 'page' => 'contact.php'],
 ];
+$showCartPages = ['menu.php', 'shop.php', 'menu_dashboard.php', 'cart.php', 'checkout.php', 'order-confirmation.php'];
+$showCartIcon = in_array($currentPage, $showCartPages, true);
 ?>
 
 <!DOCTYPE html>
@@ -59,9 +61,11 @@ $navItems = [
 
             <div class="header-tools">
                 <?php if ($isCustomerHeader): ?><a href="#" class="customer-header-icon is-disabled" aria-label="Delivery tracking coming soon" title="Delivery tracking coming soon" aria-disabled="true"><i class="fa-solid fa-truck"></i></a><a href="/BreadBreak/customer/account.php" class="customer-profile-button" aria-label="Open My Account" title="My Account"><?php if ($customerProfileImage): ?><img src="<?php echo htmlspecialchars($customerProfileImage); ?>" alt="Profile photo" /><?php else: ?><span aria-hidden="true"><?php echo htmlspecialchars($customerInitial); ?></span><?php endif; ?></a><?php endif; ?>
+                <?php if ($showCartIcon): ?>
                 <a href="/BreadBreak/cart.php" class="cart-button" aria-label="Shopping cart" title="Shopping cart">
                     <i class="fa-solid fa-cart-shopping"></i><span class="cart-count" data-cart-count><?php echo (int) $headerCartCount; ?></span>
                 </a>
+                <?php endif; ?>
                 <?php if ($isCustomerHeader): ?><a href="/BreadBreak/logout.php" class="btn btn-outline"><i class="fa-solid fa-right-from-bracket"></i> Logout</a><?php else: ?><a href="/BreadBreak/login.php" class="btn btn-outline"><i class="fa-solid fa-right-to-bracket"></i> Login</a><?php endif; ?>
             </div>
         </div>

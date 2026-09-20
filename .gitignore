@@ -1,0 +1,7 @@
+# Logs and runtime artifacts
+webhook/webhook_log.txt
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
