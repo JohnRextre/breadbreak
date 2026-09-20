@@ -187,17 +187,19 @@ $pageTitle = 'Order Confirmation | BreadBreak';
                 <dd>
                     <?php
                     $pmLabels = [
-                        'GCASH'     => ['GCash', 'fa-mobile-screen', '#1777ff'],
-                        'PAYMAYA'   => ['Maya', 'fa-leaf', '#00c17b'],
-                        'GRABPAY'   => ['GrabPay', 'fa-car-side', '#00b14f'],
-                        'SHOPEEPAY' => ['ShopeePay', 'fa-bag-shopping', '#ee4d2d'],
-                        'CARD'      => ['Credit/Debit Card', 'fa-credit-card', '#5849d1'],
-                        'CASH'      => ['Cash on ' . (($order['fulfillment_type'] ?? 'delivery') === 'pickup' ? 'Pickup' : 'Delivery'), 'fa-money-bill-wave', '#b8860b'],
+                        'GCASH'     => ['GCash', '/BreadBreak/assets/images/payments/gcash.svg'],
+                        'PAYMAYA'   => ['Maya', '/BreadBreak/assets/images/payments/maya.svg'],
+                        'GRABPAY'   => ['GrabPay', '/BreadBreak/assets/images/payments/grabpay.svg'],
+                        'SHOPEEPAY' => ['ShopeePay', '/BreadBreak/assets/images/payments/shopeepay.svg'],
+                        'CARD'      => ['Credit / Debit Card', '/BreadBreak/assets/images/payments/card.svg'],
+                        'CASH'      => ['Cash on ' . (($order['fulfillment_type'] ?? 'delivery') === 'pickup' ? 'Pickup' : 'Delivery'), '/BreadBreak/assets/images/payments/cash.svg'],
                     ];
-                    [$pmName, $pmIcon, $pmColor] = $pmLabels[$orderPayMethod] ?? [$orderPayMethod, 'fa-circle', '#666'];
+                    [$pmName, $pmLogo] = $pmLabels[$orderPayMethod] ?? [$orderPayMethod, ''];
                     ?>
-                    <span style="display:inline-flex;align-items:center;gap:.4rem;font-weight:700;color:var(--brown-900);">
-                        <i class="fa-solid <?php echo $pmIcon; ?>" style="color:<?php echo $pmColor; ?>;"></i>
+                    <span style="display:inline-flex;align-items:center;gap:.5rem;font-weight:700;color:var(--brown-900);">
+                        <?php if ($pmLogo): ?>
+                            <img src="<?php echo $pmLogo; ?>" alt="<?php echo htmlspecialchars($pmName); ?>" style="height:22px;max-width:70px;border-radius:4px;object-fit:contain;" />
+                        <?php endif; ?>
                         <?php echo htmlspecialchars($pmName); ?>
                     </span>
                 </dd>

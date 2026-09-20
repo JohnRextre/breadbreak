@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 130 36" fill="none">
+  <rect width="130" height="36" rx="8" fill="#00B14F"/>
+  <text x="12" y="24" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Manrope', 'Segoe UI', Roboto, sans-serif" font-weight="900" font-size="16" letter-spacing="-0.5">Grab<tspan font-weight="500" fill="#E8F9EE">Pay</tspan></text>
+  <!-- Mini wallet/coin badge -->
+  <g transform="translate(94, 8)">
+    <rect width="24" height="20" rx="4" fill="#FFFFFF" fill-opacity="0.2"/>
+    <circle cx="12" cy="10" r="4" fill="#FFFFFF"/>
+  </g>
+</svg>

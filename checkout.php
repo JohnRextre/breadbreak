@@ -459,30 +459,16 @@ $pageTitle = 'Checkout | BreadBreak';
 
     <div class="checkout-layout">
 
-        <!-- ── Left Column: Items, Fulfillment Choice, Senior/PWD ── -->
-        <div>
-            <!-- ── Fulfillment Choice Card (Delivery vs Pickup) ── -->
-            <div class="fulfillment-selector-card">
-                <div style="display:flex;align-items:center;justify-content:space-between;">
-                    <h2 style="font-size:1.15rem;margin:0;color:var(--brown-900);">
-                        <i class="fa-solid fa-box-open" style="margin-right:.5rem;color:var(--accent)"></i>Fulfillment Option
-                    </h2>
-                    <span style="font-size:.8rem;color:var(--muted);">Select how you want to receive your order</span>
-                </div>
-                <div class="fulfillment-toggle-group" role="tablist">
-                    <button type="button" class="fulfillment-toggle-btn is-active" id="toggle-delivery-btn" data-mode="delivery">
-                        <i class="fa-solid fa-truck"></i> Delivery
-                    </button>
-                    <button type="button" class="fulfillment-toggle-btn" id="toggle-pickup-btn" data-mode="pickup">
-                        <i class="fa-solid fa-store"></i> Store Pickup (Free)
-                    </button>
-                </div>
-            </div>
+        <!-- ── Left Column: Items, Fulfillment Choice, Address, Senior/PWD, Payment ── -->
+        <div class="checkout-main">
 
-            <!-- Order Items Card -->
-            <div class="checkout-card" style="margin-bottom:1.5rem;">
-                <div class="checkout-card-header">
+            <!-- ── 1. Your Order Items Card ── -->
+            <div class="checkout-card" id="order-items-card">
+                <div class="checkout-card-header" style="display:flex;align-items:center;justify-content:space-between;">
                     <h2><i class="fa-solid fa-bag-shopping" style="margin-right:.5rem;color:var(--accent)"></i>Your Order Items</h2>
+                    <span style="font-size:.82rem;font-weight:700;background:var(--cream);color:var(--brown-900);border:1px solid var(--border);padding:.25rem .7rem;border-radius:100px;">
+                        <?php echo count($cartItems); ?> <?php echo count($cartItems) === 1 ? 'item' : 'items'; ?>
+                    </span>
                 </div>
                 <div class="checkout-card-body" style="padding:0;">
                     <table class="order-table">
@@ -518,6 +504,26 @@ $pageTitle = 'Checkout | BreadBreak';
                         <?php endforeach; ?>
                         </tbody>
                     </table>
+                </div>
+            </div>
+
+            <!-- ── 2. Fulfillment Option Card (Below Order Items) ── -->
+            <div class="fulfillment-selector-card" id="fulfillment-selector-card">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;">
+                    <div>
+                        <h2 style="font-size:1.15rem;margin:0;color:var(--brown-900);">
+                            <i class="fa-solid fa-box-open" style="margin-right:.5rem;color:var(--accent)"></i>Fulfillment Option
+                        </h2>
+                        <span style="font-size:.8rem;color:var(--muted);">Select how you want to receive your order</span>
+                    </div>
+                </div>
+                <div class="fulfillment-toggle-group" role="tablist">
+                    <button type="button" class="fulfillment-toggle-btn is-active" id="toggle-delivery-btn" data-mode="delivery">
+                        <i class="fa-solid fa-truck"></i> Delivery
+                    </button>
+                    <button type="button" class="fulfillment-toggle-btn" id="toggle-pickup-btn" data-mode="pickup">
+                        <i class="fa-solid fa-store"></i> Store Pickup (Free)
+                    </button>
                 </div>
             </div>
 
@@ -723,97 +729,155 @@ $pageTitle = 'Checkout | BreadBreak';
                     </div>
                 </div>
             </div>
-        </div>
 
-            <!-- ── Payment Method Card ── -->
+            <!-- ── 6. Payment Method Card (Modern E-Commerce Design) ── -->
             <div class="checkout-card" id="payment-method-card">
-                <div class="checkout-card-header">
-                    <h2><i class="fa-solid fa-credit-card" style="margin-right:.5rem;color:var(--accent)"></i>Payment Method</h2>
+                <div class="checkout-card-header" style="display:flex;align-items:center;justify-content:space-between;">
+                    <div>
+                        <h2><i class="fa-solid fa-wallet" style="margin-right:.5rem;color:var(--accent)"></i>Payment Method</h2>
+                        <span style="font-size:.8rem;color:var(--muted);">Select your preferred payment channel</span>
+                    </div>
+                    <span style="font-size:.74rem;font-weight:700;background:#f3f4f6;color:#374151;border:1px solid #e5e7eb;padding:.2rem .6rem;border-radius:6px;">
+                        <i class="fa-solid fa-shield-halved" style="color:var(--accent);margin-right:.25rem;"></i>Secure Gateway
+                    </span>
                 </div>
                 <div class="checkout-card-body">
-                    <div class="pay-method-grid" id="pay-method-grid">
+                    <div class="pay-methods-grid" id="pay-method-grid">
 
                         <!-- GCash -->
-                        <label class="pay-method-option is-selected" data-method="GCASH">
+                        <label class="pay-method-card is-selected" data-method="GCASH">
                             <input type="radio" name="pay_method_radio" value="GCASH" checked hidden />
-                            <span class="pay-method-icon" style="background:#1777ff;color:#fff;"><i class="fa-solid fa-mobile-screen"></i></span>
-                            <span class="pay-method-label">GCash</span>
+                            <div class="pay-radio-circle"></div>
+                            <div class="pay-logo-box">
+                                <img src="/BreadBreak/assets/images/payments/gcash.svg" alt="GCash" class="pay-brand-img" />
+                            </div>
+                            <div class="pay-card-details">
+                                <div class="pay-card-name">GCash</div>
+                                <div class="pay-card-desc">Instant e-Wallet Payment</div>
+                            </div>
+                            <span class="pay-tag-popular">Popular</span>
                         </label>
 
                         <!-- Maya -->
-                        <label class="pay-method-option" data-method="PAYMAYA">
+                        <label class="pay-method-card" data-method="PAYMAYA">
                             <input type="radio" name="pay_method_radio" value="PAYMAYA" hidden />
-                            <span class="pay-method-icon" style="background:#00c17b;color:#fff;"><i class="fa-solid fa-leaf"></i></span>
-                            <span class="pay-method-label">Maya</span>
+                            <div class="pay-radio-circle"></div>
+                            <div class="pay-logo-box">
+                                <img src="/BreadBreak/assets/images/payments/maya.svg" alt="Maya" class="pay-brand-img" />
+                            </div>
+                            <div class="pay-card-details">
+                                <div class="pay-card-name">Maya</div>
+                                <div class="pay-card-desc">Wallet &amp; QR Ph</div>
+                            </div>
                         </label>
 
                         <!-- GrabPay -->
-                        <label class="pay-method-option" data-method="GRABPAY">
+                        <label class="pay-method-card" data-method="GRABPAY">
                             <input type="radio" name="pay_method_radio" value="GRABPAY" hidden />
-                            <span class="pay-method-icon" style="background:#00b14f;color:#fff;"><i class="fa-solid fa-car-side"></i></span>
-                            <span class="pay-method-label">GrabPay</span>
+                            <div class="pay-radio-circle"></div>
+                            <div class="pay-logo-box">
+                                <img src="/BreadBreak/assets/images/payments/grabpay.svg" alt="GrabPay" class="pay-brand-img" />
+                            </div>
+                            <div class="pay-card-details">
+                                <div class="pay-card-name">GrabPay</div>
+                                <div class="pay-card-desc">GrabPay Wallet</div>
+                            </div>
                         </label>
 
                         <!-- ShopeePay -->
-                        <label class="pay-method-option" data-method="SHOPEEPAY">
+                        <label class="pay-method-card" data-method="SHOPEEPAY">
                             <input type="radio" name="pay_method_radio" value="SHOPEEPAY" hidden />
-                            <span class="pay-method-icon" style="background:#ee4d2d;color:#fff;"><i class="fa-solid fa-bag-shopping"></i></span>
-                            <span class="pay-method-label">ShopeePay</span>
+                            <div class="pay-radio-circle"></div>
+                            <div class="pay-logo-box">
+                                <img src="/BreadBreak/assets/images/payments/shopeepay.svg" alt="ShopeePay" class="pay-brand-img" />
+                            </div>
+                            <div class="pay-card-details">
+                                <div class="pay-card-name">ShopeePay</div>
+                                <div class="pay-card-desc">Shopee e-Wallet</div>
+                            </div>
                         </label>
 
-                        <!-- Card -->
-                        <label class="pay-method-option" data-method="CARD">
+                        <!-- Credit / Debit Card -->
+                        <label class="pay-method-card" data-method="CARD">
                             <input type="radio" name="pay_method_radio" value="CARD" hidden />
-                            <span class="pay-method-icon" style="background:#5849d1;color:#fff;"><i class="fa-solid fa-credit-card"></i></span>
-                            <span class="pay-method-label">Card</span>
+                            <div class="pay-radio-circle"></div>
+                            <div class="pay-logo-box">
+                                <img src="/BreadBreak/assets/images/payments/card.svg" alt="Credit / Debit Card" class="pay-brand-img" />
+                            </div>
+                            <div class="pay-card-details">
+                                <div class="pay-card-name">Credit / Debit Card</div>
+                                <div class="pay-card-desc">Visa &amp; Mastercard</div>
+                            </div>
                         </label>
 
                         <!-- Cash -->
-                        <label class="pay-method-option" data-method="CASH">
+                        <label class="pay-method-card" data-method="CASH">
                             <input type="radio" name="pay_method_radio" value="CASH" hidden />
-                            <span class="pay-method-icon" style="background:#b8860b;color:#fff;"><i class="fa-solid fa-money-bill-wave"></i></span>
-                            <span class="pay-method-label">Cash</span>
+                            <div class="pay-radio-circle"></div>
+                            <div class="pay-logo-box">
+                                <img src="/BreadBreak/assets/images/payments/cash.svg" alt="Cash" class="pay-brand-img" />
+                            </div>
+                            <div class="pay-card-details">
+                                <div class="pay-card-name" id="cash-card-title">Cash on Delivery</div>
+                                <div class="pay-card-desc" id="cash-card-desc">Pay cash upon arrival</div>
+                            </div>
                         </label>
 
                     </div>
 
                     <!-- E-Wallet / Card hint -->
-                    <div id="pm-ewallet-hint" class="checkout-alert alert-info" style="margin-top:.9rem;font-size:.82rem;padding:.65rem .9rem;">
-                        <i class="fa-solid fa-circle-info"></i>
+                    <div id="pm-ewallet-hint" class="checkout-alert alert-info" style="margin-top:1rem;font-size:.85rem;padding:.75rem 1rem;display:flex;align-items:center;gap:.6rem;">
+                        <i class="fa-solid fa-circle-info" style="color:#0284c7;font-size:1rem;"></i>
                         <span id="pm-ewallet-hint-text">You'll be redirected to GCash to complete payment securely via Xendit. <strong>(TEST MODE)</strong></span>
                     </div>
 
                     <!-- Cash input panel -->
-                    <div id="pm-cash-panel" style="display:none;margin-top:.9rem;padding:1rem 1.1rem;background:#fdfaf6;border:1.5px solid var(--border);border-radius:12px;">
-                        <p style="font-size:.88rem;font-weight:700;color:var(--brown-900);margin:0 0 .75rem;">
-                            <i class="fa-solid fa-money-bill-wave" style="margin-right:.4rem;color:#b8860b;"></i>
-                            How much cash will you bring?
-                        </p>
-                        <!-- Quick denomination buttons -->
-                        <div style="display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.75rem;" id="cash-denom-btns">
-                            <span style="font-size:.78rem;color:var(--muted);font-weight:600;align-self:center;">Quick select:</span>
-                            <?php foreach ([20,50,100,200,500,1000] as $d): ?>
-                            <button type="button" class="cash-denom-btn" data-amount="<?php echo $d; ?>">₱<?php echo $d; ?></button>
-                            <?php endforeach; ?>
-                        </div>
-                        <label style="display:flex;flex-direction:column;gap:.35rem;font-size:.85rem;font-weight:600;color:var(--brown-800);">
-                            Cash Amount (₱) <span style="color:#c00;font-size:.78rem;font-weight:400;">Must be ≥ total and ≤ ₱5,000</span>
-                            <input type="number" id="cash-amount-input" min="1" max="5000" step="1" placeholder="e.g. 500"
-                                style="border:1.5px solid var(--border);border-radius:8px;padding:.6rem .9rem;font-family:inherit;font-size:1rem;max-width:220px;" />
-                        </label>
-                        <div id="cash-change-display" style="display:none;margin-top:.75rem;padding:.6rem .9rem;background:#e8f7ef;border:1.5px solid #a3d9bc;border-radius:10px;font-size:.92rem;font-weight:700;color:#1a6645;">
-                            <i class="fa-solid fa-coins" style="margin-right:.4rem;"></i>
-                            Your change: <span id="cash-change-amount">₱0.00</span>
-                        </div>
-                        <div id="cash-amount-error" style="display:none;margin-top:.5rem;font-size:.82rem;color:#c00;font-weight:600;"></div>
-
-                        <div class="checkout-alert" style="margin-top:.75rem;margin-bottom:0;font-size:.82rem;padding:.65rem .9rem;background:#fff3e0;border-color:#f5c842;color:#7a4200;">
-                            <i class="fa-solid fa-circle-info" style="color:#b85c00;"></i>
-                            <span>
-                                <?php if (true /* fulfillment determined by JS */): ?>
-                                <strong>Delivery:</strong> Our rider will collect your cash. <strong>Pickup:</strong> Pay at our store counter before claiming your order.
-                                <?php endif; ?>
+                    <div id="pm-cash-panel" style="display:none;margin-top:1rem;padding:1.2rem 1.3rem;background:#fffdfa;border:1.5px solid #ebd9c5;border-radius:14px;">
+                        <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.85rem;">
+                            <span style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;background:#e8f7ef;color:#166534;font-size:.95rem;">
+                                <i class="fa-solid fa-money-bill-wave"></i>
                             </span>
+                            <div>
+                                <h4 style="margin:0;font-size:.95rem;color:var(--brown-900);font-weight:800;">Cash Payment Details</h4>
+                                <span style="font-size:.78rem;color:var(--muted);">Specify your cash denomination so our rider/store can prepare exact change</span>
+                            </div>
+                        </div>
+
+                        <!-- Quick denomination buttons -->
+                        <div style="margin-bottom:1rem;">
+                            <div style="font-size:.78rem;color:var(--muted);font-weight:700;margin-bottom:.4rem;">QUICK SELECT DENOMINATION:</div>
+                            <div style="display:flex;flex-wrap:wrap;gap:.45rem;" id="cash-denom-btns">
+                                <?php foreach ([50,100,200,500,1000] as $d): ?>
+                                <button type="button" class="cash-denom-pill" data-amount="<?php echo $d; ?>">₱<?php echo number_format($d); ?></button>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+
+                        <div style="max-width:300px;">
+                            <label style="display:flex;flex-direction:column;gap:.35rem;font-size:.85rem;font-weight:700;color:var(--brown-800);">
+                                <span>Cash You Will Bring / Pay With <span style="color:#c00;">*</span></span>
+                                <div style="position:relative;display:flex;align-items:center;">
+                                    <span style="position:absolute;left:12px;font-weight:800;color:var(--muted);font-size:1rem;">₱</span>
+                                    <input type="number" id="cash-amount-input" min="1" max="5000" step="1" placeholder="0.00"
+                                        style="width:100%;border:1.5px solid var(--border);border-radius:10px;padding:.6rem .85rem .6rem 2rem;font-family:inherit;font-size:1.05rem;font-weight:700;color:var(--brown-900);" />
+                                </div>
+                            </label>
+                            <span style="font-size:.75rem;color:var(--muted);margin-top:.25rem;display:block;">Must be at least the total to pay (max ₱5,000).</span>
+                        </div>
+
+                        <div id="cash-change-display" style="display:none;margin-top:.85rem;padding:.7rem 1rem;background:#e8f7ef;border:1.5px solid #a3d9bc;border-radius:10px;align-items:center;justify-content:space-between;">
+                            <div style="display:flex;align-items:center;gap:.5rem;">
+                                <i class="fa-solid fa-circle-check" style="color:#16a34a;font-size:1.05rem;"></i>
+                                <span style="font-size:.86rem;color:#166534;font-weight:700;">Calculated Change:</span>
+                            </div>
+                            <span id="cash-change-amount" style="font-size:1.15rem;font-weight:800;color:#166534;">₱0.00</span>
+                        </div>
+
+                        <div id="cash-amount-error" style="display:none;margin-top:.5rem;padding:.5rem .8rem;background:#fff5f5;border:1px solid #fecaca;border-radius:8px;font-size:.82rem;color:#c00;font-weight:600;"></div>
+
+                        <div id="cash-fulfillment-note" class="checkout-alert" style="margin-top:.85rem;margin-bottom:0;font-size:.82rem;padding:.65rem .9rem;background:#fff8e6;border-color:#f5c842;color:#7a4200;">
+                            <i class="fa-solid fa-circle-info" style="color:#b85c00;"></i>
+                            <span id="cash-note-text"><strong>Delivery:</strong> Our rider will bring your order and provide change. Please have your cash ready.</span>
                         </div>
                     </div>
                 </div>
@@ -1165,17 +1229,27 @@ $pageTitle = 'Checkout | BreadBreak';
         currentFulfillment = mode;
         hiddenFulfill.value = mode;
 
+        const cashCardTitle = document.getElementById('cash-card-title');
+        const cashCardDesc  = document.getElementById('cash-card-desc');
+        const cashNoteText  = document.getElementById('cash-note-text');
+
         if (mode === 'pickup') {
             togglePickupBtn.classList.add('is-active');
             toggleDeliveryBtn.classList.remove('is-active');
             deliveryCard.style.display = 'none';
             pickupCard.style.display   = 'block';
             updateSummaryFee(0);
+            if (cashCardTitle) cashCardTitle.textContent = 'Cash on Store Pickup';
+            if (cashCardDesc)  cashCardDesc.textContent  = 'Pay at store counter upon claim';
+            if (cashNoteText)  cashNoteText.innerHTML    = '<strong>Store Pickup:</strong> Please bring cash to our store counter before claiming your order.';
         } else {
             toggleDeliveryBtn.classList.add('is-active');
             togglePickupBtn.classList.remove('is-active');
             deliveryCard.style.display = 'block';
             pickupCard.style.display   = 'none';
+            if (cashCardTitle) cashCardTitle.textContent = 'Cash on Delivery';
+            if (cashCardDesc)  cashCardDesc.textContent  = 'Pay cash upon arrival';
+            if (cashNoteText)  cashNoteText.innerHTML    = '<strong>Delivery:</strong> Our rider will bring your order and provide change. Please have your cash ready.';
             // Re-apply delivery address selection
             if (savedAddrList && !usingOtherAddr) {
                 applySelectedRadio();
@@ -1494,7 +1568,7 @@ $pageTitle = 'Checkout | BreadBreak';
     }
 
     // ── Payment Method Selector ───────────────────────────────────────────────
-    const payMethodOptions  = document.querySelectorAll('.pay-method-option');
+    const payMethodCards    = document.querySelectorAll('.pay-method-card, .pay-method-option');
     const hiddenPayMethod   = document.getElementById('hidden-payment-method');
     const hiddenCashAmount  = document.getElementById('hidden-cash-amount');
     const ewalletHint       = document.getElementById('pm-ewallet-hint');
@@ -1508,35 +1582,35 @@ $pageTitle = 'Checkout | BreadBreak';
     const summaryPayNote    = document.getElementById('summary-payment-note');
     const btnText           = document.getElementById('place-order-btn-text');
     const btnIcon           = document.getElementById('place-order-btn-icon');
+    const denomPills        = document.querySelectorAll('.cash-denom-pill, .cash-denom-btn');
 
     let currentPayMethod = 'GCASH';
 
     const payMethodMeta = {
-        GCASH:     { label: 'GCash',     icon: 'fa-mobile-screen',   color: '#1777ff', btnLabel: 'Confirm & Pay via GCash',     btnIcon: 'fa-mobile-screen' },
-        PAYMAYA:   { label: 'Maya',      icon: 'fa-leaf',            color: '#00c17b', btnLabel: 'Confirm & Pay via Maya',      btnIcon: 'fa-leaf' },
-        GRABPAY:   { label: 'GrabPay',   icon: 'fa-car-side',        color: '#00b14f', btnLabel: 'Confirm & Pay via GrabPay',   btnIcon: 'fa-car-side' },
-        SHOPEEPAY: { label: 'ShopeePay', icon: 'fa-bag-shopping',    color: '#ee4d2d', btnLabel: 'Confirm & Pay via ShopeePay', btnIcon: 'fa-bag-shopping' },
-        CARD:      { label: 'Card',      icon: 'fa-credit-card',     color: '#5849d1', btnLabel: 'Confirm & Pay via Card',      btnIcon: 'fa-credit-card' },
-        CASH:      { label: 'Cash',      icon: 'fa-money-bill-wave', color: '#b8860b', btnLabel: 'Confirm Order (Cash)',         btnIcon: 'fa-money-bill-wave' },
+        GCASH:     { label: 'GCash',              logo: '/BreadBreak/assets/images/payments/gcash.svg',     btnLabel: 'Confirm & Pay via GCash',     btnIcon: 'fa-mobile-screen' },
+        PAYMAYA:   { label: 'Maya',               logo: '/BreadBreak/assets/images/payments/maya.svg',      btnLabel: 'Confirm & Pay via Maya',      btnIcon: 'fa-leaf' },
+        GRABPAY:   { label: 'GrabPay',            logo: '/BreadBreak/assets/images/payments/grabpay.svg',   btnLabel: 'Confirm & Pay via GrabPay',   btnIcon: 'fa-car-side' },
+        SHOPEEPAY: { label: 'ShopeePay',          logo: '/BreadBreak/assets/images/payments/shopeepay.svg', btnLabel: 'Confirm & Pay via ShopeePay', btnIcon: 'fa-bag-shopping' },
+        CARD:      { label: 'Credit / Debit Card',logo: '/BreadBreak/assets/images/payments/card.svg',      btnLabel: 'Confirm & Pay via Card',      btnIcon: 'fa-credit-card' },
+        CASH:      { label: 'Cash',               logo: '/BreadBreak/assets/images/payments/cash.svg',      btnLabel: 'Confirm Order (Cash)',         btnIcon: 'fa-money-bill-wave' },
     };
 
     function getCurrentGrandTotal() {
-        // Parse from the live display element
-        const raw = grandTotalEl.textContent.replace(/[₱,]/g, '').trim();
+        const raw = grandTotalEl ? grandTotalEl.textContent.replace(/[₱,]/g, '').trim() : '0';
         return parseFloat(raw) || 0;
     }
 
     function updatePaymentUI(method) {
         currentPayMethod = method;
-        hiddenPayMethod.value = method;
+        if (hiddenPayMethod) hiddenPayMethod.value = method;
         const meta = payMethodMeta[method] || payMethodMeta.GCASH;
 
-        // Update summary badge
+        // Update summary badge with clean SVG logo
         if (payBadgeDisplay) {
-            payBadgeDisplay.innerHTML = '<i class="fa-solid ' + meta.icon + '"></i> Pay via ' + meta.label + ' (TEST MODE)';
+            payBadgeDisplay.innerHTML = '<img src="' + meta.logo + '" alt="' + meta.label + '" style="height:18px;max-width:60px;vertical-align:middle;margin-right:6px;border-radius:3px;"> Pay via ' + meta.label + (method === 'CASH' ? '' : ' (TEST MODE)');
         }
 
-        // Update submit button label
+        // Update submit button label & icon
         if (btnText) btnText.textContent = meta.btnLabel;
         if (btnIcon) {
             btnIcon.className = 'fa-solid ' + meta.btnIcon;
@@ -1548,22 +1622,24 @@ $pageTitle = 'Checkout | BreadBreak';
             if (ewalletHint) ewalletHint.style.display = 'none';
             if (cashPanel)   cashPanel.style.display   = 'block';
             if (summaryPayNote) {
-                summaryPayNote.innerHTML = '<i class="fa-solid fa-lock" style="margin-right:.35rem;"></i>Cash payment — please prepare the exact or nearest denomination. Your change will be calculated.';
+                summaryPayNote.innerHTML = '<i class="fa-solid fa-lock" style="margin-right:.35rem;"></i>Cash payment — please prepare the exact or nearest cash denomination. Change will be calculated upon arrival.';
             }
             validateCashInput();
         } else {
             // Hide cash panel, show ewallet hint
             if (cashPanel)   cashPanel.style.display   = 'none';
             if (ewalletHint) ewalletHint.style.display = 'flex';
-            hiddenCashAmount.value = '';
-            if (cashAmountInput) cashAmountInput.value = '';
+            if (hiddenCashAmount) hiddenCashAmount.value = '';
+            if (cashAmountInput)  cashAmountInput.value  = '';
             if (cashChangeDisplay) cashChangeDisplay.style.display = 'none';
+            if (cashAmountError)   cashAmountError.style.display   = 'none';
+            denomPills.forEach(p => p.style.borderColor = '');
 
             // Update hint text
             const isCard = method === 'CARD';
             if (ewalletHintText) {
                 ewalletHintText.innerHTML = isCard
-                    ? 'You\'ll be redirected to enter your card details securely via Xendit. <strong>(TEST MODE)</strong>'
+                    ? 'You\'ll be redirected to enter your Visa/Mastercard card details securely via Xendit. <strong>(TEST MODE)</strong>'
                     : 'You\'ll be redirected to ' + meta.label + ' to complete payment securely via Xendit. <strong>(TEST MODE)</strong>';
             }
             if (summaryPayNote) {
@@ -1581,58 +1657,71 @@ $pageTitle = 'Checkout | BreadBreak';
         if (cashAmountError) cashAmountError.style.display = 'none';
         if (cashChangeDisplay) cashChangeDisplay.style.display = 'none';
 
+        // Highlight matched denomination pill
+        denomPills.forEach(p => {
+            if (parseFloat(p.dataset.amount) === val) {
+                p.style.borderColor = 'var(--accent)';
+                p.style.background = 'var(--accent)';
+                p.style.color = '#fff';
+            } else {
+                p.style.borderColor = '';
+                p.style.background = '';
+                p.style.color = '';
+            }
+        });
+
         if (!val || val <= 0) {
-            hiddenCashAmount.value = '';
+            if (hiddenCashAmount) hiddenCashAmount.value = '';
             setOrderButton(false, 'Please enter the cash amount you will bring.');
             return false;
         }
         if (val < total) {
             if (cashAmountError) {
-                cashAmountError.textContent = 'Cash amount is less than the total (₱' + total.toLocaleString('en-PH', {minimumFractionDigits:2}) + '). Please enter a higher amount.';
+                cashAmountError.textContent = 'Cash amount is less than the total to pay (₱' + total.toLocaleString('en-PH', {minimumFractionDigits:2}) + '). Please enter a higher amount.';
                 cashAmountError.style.display = 'block';
             }
-            hiddenCashAmount.value = '';
+            if (hiddenCashAmount) hiddenCashAmount.value = '';
             setOrderButton(false, 'Cash amount must be at least ₱' + total.toLocaleString('en-PH', {minimumFractionDigits:2}) + '.');
             return false;
         }
-        const maxAllowed = Math.min(total * 3, 5000);
+        const maxAllowed = Math.min(Math.max(total * 3, 1000), 5000);
         if (val > maxAllowed) {
             if (cashAmountError) {
                 cashAmountError.textContent = 'Cash amount is too large (max ₱' + maxAllowed.toLocaleString('en-PH', {minimumFractionDigits:2}) + ' for this order). Please enter the actual denomination you will bring.';
                 cashAmountError.style.display = 'block';
             }
-            hiddenCashAmount.value = '';
+            if (hiddenCashAmount) hiddenCashAmount.value = '';
             setOrderButton(false, 'Cash amount is too large. Max: ₱' + maxAllowed.toLocaleString('en-PH', {minimumFractionDigits:2}) + '.');
             return false;
         }
 
         // Valid cash amount
         const change = val - total;
-        hiddenCashAmount.value = val;
+        if (hiddenCashAmount) hiddenCashAmount.value = val;
         if (cashChangeDisplay) {
             cashChangeDisplay.style.display = 'flex';
-            cashChangeDisplay.style.alignItems = 'center';
         }
         if (cashChangeAmount) {
             cashChangeAmount.textContent = '₱' + change.toLocaleString('en-PH', {minimumFractionDigits:2});
         }
 
-        // Still need address/fulfillment check
         return updateOrderButtonState();
     }
 
-    // Wire up pill clicks
-    payMethodOptions.forEach(function (label) {
-        label.addEventListener('click', function () {
-            payMethodOptions.forEach(l => l.classList.remove('is-selected'));
+    // Wire up payment card selection
+    payMethodCards.forEach(function (card) {
+        card.addEventListener('click', function () {
+            payMethodCards.forEach(c => c.classList.remove('is-selected'));
             this.classList.add('is-selected');
+            const radio = this.querySelector('input[type="radio"]');
+            if (radio) radio.checked = true;
             const method = this.dataset.method;
             updatePaymentUI(method);
         });
     });
 
     // Quick denomination buttons
-    document.querySelectorAll('.cash-denom-btn').forEach(function (btn) {
+    denomPills.forEach(function (btn) {
         btn.addEventListener('click', function () {
             if (cashAmountInput) {
                 cashAmountInput.value = this.dataset.amount;
@@ -1647,12 +1736,7 @@ $pageTitle = 'Checkout | BreadBreak';
         cashAmountInput.addEventListener('blur', validateCashInput);
     }
 
-    // Re-validate cash when total changes (discount toggle)
-    const origRecalc = recalculateTotal;
-    // We patch into post-recalculate by overriding updateSummaryFee
-    const origUpdateSummaryFee = updateSummaryFee;
-
-    // Initialize payment UI
+    // Initialize payment UI to GCash
     updatePaymentUI('GCASH');
 })();
 </script>

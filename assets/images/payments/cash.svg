@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 110 36" fill="none">
+  <rect width="110" height="36" rx="8" fill="#166534"/>
+  <!-- Banknote icon -->
+  <g transform="translate(10, 8)">
+    <rect width="22" height="15" rx="2" fill="#22C55E" stroke="#DCFCE7" stroke-width="1.2"/>
+    <circle cx="11" cy="7.5" r="3.2" fill="#DCFCE7"/>
+  </g>
+  <text x="38" y="24" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Manrope', 'Segoe UI', Roboto, sans-serif" font-weight="800" font-size="15" letter-spacing="-0.3">CASH</text>
+</svg>

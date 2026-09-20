@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 110 36" fill="none">
+  <rect width="110" height="36" rx="8" fill="#111827"/>
+  <!-- Maya Icon / Wordmark -->
+  <g transform="translate(10, 8)">
+    <!-- Stylized bird/m shape in neon green -->
+    <path d="M4 14 C2 10 3 4 8 2 C13 0 16 6 18 10 C20 6 23 0 28 2 C33 4 34 10 32 14" stroke="#00D665" stroke-width="3" stroke-linecap="round" fill="none"/>
+  </g>
+  <text x="36" y="24" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Manrope', 'Segoe UI', Roboto, sans-serif" font-weight="800" font-size="18" letter-spacing="-0.5">maya</text>
+</svg>
