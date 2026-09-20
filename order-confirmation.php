@@ -18,7 +18,10 @@ if ($ref) {
 
     // Load order (must belong to this customer)
     $oStmt = $pdo->prepare(
-        "SELECT id, reference_id, status, delivery_fee, delivery_address, created_at FROM orders
+        "SELECT id, reference_id, status, subtotal, vatable_sales, vat_amount, vat_exempt_sales,
+                discount_type, discount_amount, discount_id_number, discount_name,
+                delivery_fee, delivery_address, total_amount, created_at
+         FROM orders
          WHERE reference_id = :ref AND customer_id = :cid LIMIT 1"
     );
     $oStmt->execute(['ref' => $ref, 'cid' => $customerId]);
@@ -174,6 +177,20 @@ $pageTitle = 'Order Confirmation | BreadBreak';
                 <dt>Total Amount</dt>
                 <dd><strong style="color:var(--accent)">₱<?php echo number_format((float) ($payment['amount'] ?? 0), 2); ?></strong></dd>
 
+                <?php if (!empty($order['discount_type']) && $order['discount_type'] !== 'none'): ?>
+                <dt style="grid-column:1/-1;margin-top:.3rem;border-top:1px solid var(--border);padding-top:.5rem;">
+                    <i class="fa-solid fa-id-card" style="margin-right:.3rem;color:var(--accent);"></i>Applied Discount
+                </dt>
+                <dd style="grid-column:1/-1;">
+                    <span style="background:#e8f7ef;color:#1a6645;border:1px solid #a3d9bc;padding:.2rem .6rem;border-radius:100px;font-weight:700;font-size:.82rem;">
+                        <?php echo $order['discount_type'] === 'senior' ? '🧓 Senior Citizen (20% Off + VAT Exempt)' : '♿ PWD (20% Off + VAT Exempt)'; ?>
+                    </span>
+                    <span style="font-size:.85rem;color:var(--muted);margin-left:.5rem;">
+                        ID: <strong><?php echo htmlspecialchars($order['discount_id_number'] ?? '—'); ?></strong> (<?php echo htmlspecialchars($order['discount_name'] ?? '—'); ?>)
+                    </span>
+                </dd>
+                <?php endif; ?>
+
                 <?php if (!empty($order['delivery_address'])): ?>
                 <dt style="grid-column:1/-1;margin-top:.3rem;border-top:1px solid var(--border);padding-top:.5rem;">
                     <i class="fa-solid fa-location-dot" style="margin-right:.3rem;color:var(--accent);"></i>Delivery Address
@@ -195,7 +212,11 @@ $pageTitle = 'Order Confirmation | BreadBreak';
                     </tr>
                 </thead>
                 <tbody>
-                <?php foreach ($orderItems as $item): ?>
+                <?php 
+                $itemsSum = 0.0;
+                foreach ($orderItems as $item): 
+                    $itemsSum += (float) $item['line_total'];
+                ?>
                     <tr>
                         <td class="item-name"><?php echo htmlspecialchars($item['product_name']); ?></td>
                         <td><?php echo htmlspecialchars($item['service_size']); ?></td>
@@ -205,6 +226,41 @@ $pageTitle = 'Order Confirmation | BreadBreak';
                         <td class="text-right price-cell">₱<?php echo number_format((float) $item['line_total'], 2); ?></td>
                     </tr>
                 <?php endforeach; ?>
+
+                    <!-- Items Subtotal -->
+                    <tr style="border-top:2px solid var(--border);">
+                        <td colspan="5" class="text-right" style="color:var(--muted);font-size:.9rem;">Subtotal (VAT-Inc)</td>
+                        <td class="text-right price-cell">₱<?php echo number_format($itemsSum, 2); ?></td>
+                    </tr>
+
+                    <?php if (!empty($order['discount_type']) && $order['discount_type'] !== 'none'): 
+                        $vatExemptAmount = $itemsSum - ((float) $order['vat_exempt_sales']);
+                    ?>
+                    <!-- Senior / PWD Discounts -->
+                    <tr style="color:#1a6645;">
+                        <td colspan="5" class="text-right" style="font-size:.88rem;">
+                            <i class="fa-solid fa-percent" style="margin-right:.3rem;"></i>Less: 12% VAT Exemption
+                        </td>
+                        <td class="text-right price-cell" style="color:#1a6645;">-₱<?php echo number_format($vatExemptAmount, 2); ?></td>
+                    </tr>
+                    <tr style="color:#1a6645;">
+                        <td colspan="5" class="text-right" style="font-size:.88rem;">
+                            <i class="fa-solid fa-tag" style="margin-right:.3rem;"></i>Less: 20% <?php echo strtoupper($order['discount_type']); ?> Discount
+                        </td>
+                        <td class="text-right price-cell" style="color:#1a6645;">-₱<?php echo number_format((float) $order['discount_amount'], 2); ?></td>
+                    </tr>
+                    <?php else: ?>
+                    <!-- Regular VAT Breakdown -->
+                    <tr style="font-size:.82rem;color:var(--muted);">
+                        <td colspan="5" class="text-right">VATable Sales</td>
+                        <td class="text-right price-cell" style="font-size:.82rem;color:var(--muted);">₱<?php echo number_format((float) ($order['vatable_sales'] ?: ($itemsSum / 1.12)), 2); ?></td>
+                    </tr>
+                    <tr style="font-size:.82rem;color:var(--muted);">
+                        <td colspan="5" class="text-right">12% VAT (Included)</td>
+                        <td class="text-right price-cell" style="font-size:.82rem;color:var(--muted);">₱<?php echo number_format((float) ($order['vat_amount'] ?: ($itemsSum - ($itemsSum / 1.12))), 2); ?></td>
+                    </tr>
+                    <?php endif; ?>
+
                     <?php if ((float)($order['delivery_fee'] ?? 0) > 0): ?>
                     <tr>
                         <td colspan="5" class="text-right" style="color:var(--muted);font-size:.9rem;">
@@ -213,9 +269,11 @@ $pageTitle = 'Order Confirmation | BreadBreak';
                         <td class="text-right price-cell">₱<?php echo number_format((float) $order['delivery_fee'], 2); ?></td>
                     </tr>
                     <?php endif; ?>
-                    <tr>
-                        <td colspan="5" class="text-right" style="font-weight:700;color:var(--brown-900);padding-top:1rem;">Total</td>
-                        <td class="text-right price-cell" style="font-size:1.1rem;padding-top:1rem;">
+
+                    <!-- Grand Total -->
+                    <tr style="border-top:2px solid var(--border);">
+                        <td colspan="5" class="text-right" style="font-weight:700;color:var(--brown-900);padding-top:1rem;font-size:1rem;">Total Amount Paid</td>
+                        <td class="text-right price-cell" style="font-size:1.2rem;padding-top:1rem;">
                             ₱<?php echo number_format((float) ($payment['amount'] ?? 0), 2); ?>
                         </td>
                     </tr>

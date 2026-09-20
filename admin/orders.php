@@ -14,6 +14,7 @@ $search = trim($_GET['search'] ?? '');
 $statusFilter = trim($_GET['status'] ?? 'all');
 
 $query = "SELECT o.id, o.reference_id, o.status AS order_status, o.created_at,
+                 o.delivery_fee, o.delivery_address, o.discount_type, o.discount_amount, o.discount_id_number, o.discount_name,
                  u.first_name, u.last_name, u.email, u.phone,
                  p.amount, p.payment_method, p.payment_channel, p.status AS payment_status
           FROM orders o
@@ -178,11 +179,25 @@ require __DIR__ . '/../includes/admin_header.php';
                             <span class="order-date-text">
                                 <?php echo date('M d, Y · g:i A', strtotime($o['created_at'])); ?>
                             </span>
+                            <?php if (!empty($o['discount_type']) && $o['discount_type'] !== 'none'): ?>
+                                <div style="margin-top: 5px;">
+                                    <span style="display: inline-block; background: #e8f7ef; color: #1a6645; border: 1px solid #a3d9bc; padding: 2px 6px; border-radius: 6px; font-size: 10px; font-weight: 700;">
+                                        <?php echo $o['discount_type'] === 'senior' ? '🧓 Senior 20%' : '♿ PWD 20%'; ?>
+                                    </span>
+                                    <small style="display: block; font-size: 10px; color: var(--admin-muted); margin-top: 2px;">
+                                        ID: <strong><?php echo htmlspecialchars($o['discount_id_number'] ?? '—'); ?></strong>
+                                    </small>
+                                </div>
+                            <?php endif; ?>
                         </td>
                         <td class="customer-info-cell">
                             <strong><i class="fa-solid fa-user" style="font-size: 11px; margin-right: 4px; color: var(--admin-muted);"></i><?php echo htmlspecialchars($o['first_name'] . ' ' . $o['last_name']); ?></strong>
                             <small><i class="fa-solid fa-phone" style="font-size: 9px; margin-right: 3px;"></i><?php echo htmlspecialchars($o['phone']); ?></small>
-                            <small style="color: #9c8e85;"><?php echo htmlspecialchars($o['email']); ?></small>
+                            <?php if (!empty($o['delivery_address'])): ?>
+                                <small style="color: #7b523b; display: block; margin-top: 3px; max-width: 180px; line-height: 1.3;" title="<?php echo htmlspecialchars($o['delivery_address']); ?>">
+                                    <i class="fa-solid fa-location-dot" style="font-size: 9px; margin-right: 2px; color: var(--admin-brown);"></i><?php echo htmlspecialchars(mb_strimwidth($o['delivery_address'], 0, 45, '...')); ?>
+                                </small>
+                            <?php endif; ?>
                         </td>
                         <td>
                             <div class="order-items-list">
@@ -199,6 +214,9 @@ require __DIR__ . '/../includes/admin_header.php';
                             <div class="order-price-val">
                                 ₱<?php echo number_format((float) ($o['amount'] ?? 0), 2); ?>
                             </div>
+                            <?php if ((float)($o['delivery_fee'] ?? 0) > 0): ?>
+                                <small style="display: block; font-size: 10px; color: var(--admin-muted);">+ ₱<?php echo number_format((float) $o['delivery_fee'], 2); ?> Del.</small>
+                            <?php endif; ?>
                             <span class="order-pay-channel">
                                 <i class="fa-solid fa-mobile-screen"></i> GCash
                             </span>

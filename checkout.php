@@ -1,6 +1,8 @@
 <?php
 // ============================================================
 // checkout.php  –  BreadBreak order review + Xendit payment
+// Includes: Delivery Zone check, Address Book, 12% VAT,
+// and Senior Citizen / PWD Discount (20% + VAT Exemption)
 // ============================================================
 require_once __DIR__ . '/includes/auth.php';
 requireRole('customer');
@@ -9,19 +11,29 @@ require_once __DIR__ . '/config/xendit.php';
 
 $pdo = getDatabaseConnection();
 
-// ── Ensure tables exist (safe to run on every page load) ──
+// ── Ensure tables & columns exist ──
 $pdo->exec("CREATE TABLE IF NOT EXISTS orders (
     id INT PRIMARY KEY AUTO_INCREMENT,
     customer_id INT NOT NULL,
     reference_id VARCHAR(32) NOT NULL UNIQUE,
     status ENUM('pending','processing','completed','cancelled') NOT NULL DEFAULT 'pending',
+    subtotal DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    vatable_sales DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    vat_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    vat_exempt_sales DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    discount_type ENUM('none','senior','pwd') NOT NULL DEFAULT 'none',
+    discount_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    discount_id_number VARCHAR(100) NULL,
+    discount_name VARCHAR(150) NULL,
     delivery_fee DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     delivery_address TEXT NULL,
+    total_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     notes TEXT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_order_customer FOREIGN KEY (customer_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE RESTRICT
 )");
+
 $pdo->exec("CREATE TABLE IF NOT EXISTS order_items (
     id INT PRIMARY KEY AUTO_INCREMENT,
     order_id INT NOT NULL,
@@ -36,6 +48,7 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS order_items (
     CONSTRAINT fk_order_item_order FOREIGN KEY (order_id) REFERENCES orders(id) ON UPDATE CASCADE ON DELETE CASCADE,
     CONSTRAINT fk_order_item_variant FOREIGN KEY (variant_id) REFERENCES inventory_item_variants(id) ON UPDATE CASCADE ON DELETE RESTRICT
 )");
+
 $pdo->exec("CREATE TABLE IF NOT EXISTS payments (
     id INT PRIMARY KEY AUTO_INCREMENT,
     order_id INT NOT NULL,
@@ -124,15 +137,13 @@ function serverCheckDelivery(string $address, string $mode, array $inAreas, arra
         }
         return ['allowed' => false, 'fee' => 0, 'min_order' => 0];
     }
-    // Full mode: trust the JS-submitted fee (server-side geocode done in API)
-    // Accept if address is non-empty; the API already blocked on the frontend
     return ['allowed' => true, 'fee' => 0, 'min_order' => 0];
 }
 
 // ── Handle POST: create order + payment request ──
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confirm_order') {
 
-    // CSRF: simple session token check
+    // CSRF check
     $token = $_POST['csrf_token'] ?? '';
     if (!hash_equals((string) ($_SESSION['checkout_csrf'] ?? ''), $token)) {
         $checkoutError = 'Invalid form submission. Please try again.';
@@ -140,10 +151,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
 
     // Delivery address validation
     $deliveryAddress = trim($_POST['delivery_address'] ?? '');
-    $deliveryFeePost = max(0, (int) ($_POST['delivery_fee'] ?? 0));
+    $deliveryFeePost = max(0, (float) ($_POST['delivery_fee'] ?? 0));
 
     if (!$checkoutError && $deliveryAddress === '') {
-        $checkoutError = 'Please enter your delivery address.';
+        $checkoutError = 'Please enter or select a delivery address.';
     }
 
     if (!$checkoutError) {
@@ -151,11 +162,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
         if (!$zoneCheck['allowed']) {
             $checkoutError = "Sorry, we don't deliver to your area yet. BreadBreak delivers within 8km of our branch in Estrella Village, Guiguinto.";
         }
-        // Use server-computed fee for simple mode; use submitted fee for full mode (API-validated on frontend)
         if ($deliveryMode === 'simple') {
-            $deliveryFeePost = $zoneCheck['fee'];
+            $deliveryFeePost = (float) $zoneCheck['fee'];
         }
     }
+
+    // Discount validation & server-side recalculation
+    $applyDiscount    = !empty($_POST['apply_discount']) && $_POST['apply_discount'] === '1';
+    $discountTypePost = in_array($_POST['discount_type'] ?? '', ['senior', 'pwd'], true) ? $_POST['discount_type'] : 'none';
+    $discountIdNumber = trim(strip_tags($_POST['discount_id_number'] ?? ''));
+    $discountName     = trim(strip_tags($_POST['discount_name'] ?? ''));
+
+    if (!$checkoutError && $applyDiscount) {
+        if ($discountIdNumber === '') {
+            $checkoutError = 'Please provide the Senior Citizen or PWD ID number.';
+        } elseif ($discountName === '') {
+            $checkoutError = 'Please provide the cardholder\'s full name as printed on the ID.';
+        }
+    }
+
+    // Exact VAT and Discount formulas (Philippine BIR & RA 9994 / RA 10754 Standard)
+    $subtotal = $cartTotal; // Items total (VAT-inclusive prices)
+
+    if ($applyDiscount && in_array($discountTypePost, ['senior', 'pwd'], true)) {
+        // Senior/PWD:
+        // 1. Remove 12% VAT: vat_exempt_sales = subtotal / 1.12
+        // 2. 20% discount on vat_exempt_sales: discount_amount = vat_exempt_sales * 0.20
+        // 3. Net items total: vat_exempt_sales - discount_amount
+        $vatExemptSales = round($subtotal / 1.12, 2);
+        $vatableSales   = 0.00;
+        $vatAmount      = 0.00;
+        $discountAmount = round($vatExemptSales * 0.20, 2);
+        $netItemsTotal  = round($vatExemptSales - $discountAmount, 2);
+        $discountType   = $discountTypePost;
+    } else {
+        // Regular (12% VAT inclusive):
+        $vatableSales   = round($subtotal / 1.12, 2);
+        $vatAmount      = round($subtotal - $vatableSales, 2);
+        $vatExemptSales = 0.00;
+        $discountAmount = 0.00;
+        $discountType   = 'none';
+        $discountIdNumber = null;
+        $discountName     = null;
+        $netItemsTotal    = $subtotal;
+    }
+
+    $grandTotal = round($netItemsTotal + $deliveryFeePost, 2);
 
     if (!$checkoutError) {
         // Re-validate stock one more time before touching DB
@@ -168,13 +220,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
     }
 
     if (!$checkoutError) {
-        $grandTotal = $cartTotal + $deliveryFeePost;
         $pdo->beginTransaction();
         try {
-            // 1. Create order row
+            // 1. Create order row with full VAT & Discount snapshot
             $referenceId = generateReferenceId();
-            $pdo->prepare("INSERT INTO orders (customer_id, reference_id, status, delivery_fee, delivery_address) VALUES (:cid, :ref, 'pending', :fee, :addr)")
-                ->execute(['cid' => $customerId, 'ref' => $referenceId, 'fee' => $deliveryFeePost, 'addr' => $deliveryAddress]);
+            $pdo->prepare(
+                "INSERT INTO orders 
+                    (customer_id, reference_id, status, subtotal, vatable_sales, vat_amount, vat_exempt_sales,
+                     discount_type, discount_amount, discount_id_number, discount_name,
+                     delivery_fee, delivery_address, total_amount)
+                 VALUES 
+                    (:cid, :ref, 'pending', :sub, :vsales, :vamt, :vexempt,
+                     :dtype, :damt, :did, :dname,
+                     :fee, :addr, :total)"
+            )->execute([
+                'cid'      => $customerId,
+                'ref'      => $referenceId,
+                'sub'      => $subtotal,
+                'vsales'   => $vatableSales,
+                'vamt'     => $vatAmount,
+                'vexempt'  => $vatExemptSales,
+                'dtype'    => $discountType,
+                'damt'     => $discountAmount,
+                'did'      => $discountIdNumber,
+                'dname'    => $discountName,
+                'fee'      => $deliveryFeePost,
+                'addr'     => $deliveryAddress,
+                'total'    => $grandTotal,
+            ]);
             $orderId = (int) $pdo->lastInsertId();
 
             // 2. Create order_items rows
@@ -213,9 +286,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
             // 5. Build description
             $descParts = array_map(fn($it) => $it['product_name'] . ' (' . $it['service_size'] . ') x' . $it['quantity'], $cartItems);
             $description = implode(', ', $descParts);
+            if ($discountType !== 'none') {
+                $description .= ' [' . strtoupper($discountType) . ' Discount]';
+            }
             if (strlen($description) > 255) $description = substr($description, 0, 252) . '...';
 
-            // 6. Call Xendit /v3/payment_requests with GCash (v3 flat format)
+            // 6. Call Xendit /v3/payment_requests with GCash
             $xenditPayload = [
                 'reference_id'     => $referenceId,
                 'type'             => 'PAY',
@@ -314,7 +390,7 @@ $pageTitle = 'Checkout | BreadBreak';
     <div class="section-heading" style="margin-bottom:2rem;">
         <span class="eyebrow">Step 2 of 2</span>
         <h1>Checkout</h1>
-        <p>Review your order and confirm payment via GCash.</p>
+        <p>Review your order, select delivery address, and confirm payment via GCash.</p>
     </div>
 
     <?php if ($checkoutError): ?>
@@ -326,8 +402,9 @@ $pageTitle = 'Checkout | BreadBreak';
 
     <div class="checkout-layout">
 
-        <!-- ── Left: Order Items ── -->
+        <!-- ── Left Column: Order Items, Address, Discount ── -->
         <div>
+            <!-- Order Items Card -->
             <div class="checkout-card" style="margin-bottom:1.5rem;">
                 <div class="checkout-card-header">
                     <h2><i class="fa-solid fa-bag-shopping" style="margin-right:.5rem;color:var(--accent)"></i>Your Order Items</h2>
@@ -369,8 +446,8 @@ $pageTitle = 'Checkout | BreadBreak';
                 </div>
             </div>
 
-            <!-- ── Delivery Address Card ── -->
-            <div class="checkout-card">
+            <!-- Delivery Address Card -->
+            <div class="checkout-card" style="margin-bottom:1.5rem;">
                 <div class="checkout-card-header">
                     <h2><i class="fa-solid fa-location-dot" style="margin-right:.5rem;color:var(--accent)"></i>Delivery Address</h2>
                 </div>
@@ -393,7 +470,6 @@ $pageTitle = 'Checkout | BreadBreak';
                 ?>
 
                 <?php if ($hasSavedAddresses): ?>
-                    <!-- Saved address radio cards -->
                     <p style="font-size:.88rem;color:var(--muted);margin:0 0 1rem;">Select your delivery address or use a different one below.</p>
                     <div class="saved-address-list" id="saved-address-list">
                     <?php foreach ($savedAddresses as $i => $addr):
@@ -425,7 +501,6 @@ $pageTitle = 'Checkout | BreadBreak';
                     <?php endforeach; ?>
                     </div>
 
-                    <!-- Use different address toggle -->
                     <div style="margin-top:1rem;">
                         <button type="button" class="addr-btn addr-btn-default" id="use-other-addr-toggle" style="width:100%;justify-content:center;">
                             <i class="fa-solid fa-plus" style="margin-right:.4rem;"></i> Use a different address
@@ -443,11 +518,10 @@ $pageTitle = 'Checkout | BreadBreak';
 
                     <p style="font-size:.8rem;color:var(--muted);margin-top:.75rem;">
                         <i class="fa-solid fa-circle-info" style="margin-right:.3rem;"></i>
-                        You can manage your saved addresses in <a href="/BreadBreak/customer/account.php" style="color:var(--accent);">My Account</a>.
+                        Manage addresses in <a href="/BreadBreak/customer/account.php" style="color:var(--accent);">My Account</a>.
                     </p>
 
                 <?php else: ?>
-                    <!-- No saved addresses — free-text input -->
                     <p style="font-size:.88rem;color:var(--muted);margin:0 0 1rem;">
                         Enter your full delivery address. We deliver within 8km of our branch in Estrella Village, Guiguinto, Bulacan.
                         <a href="/BreadBreak/customer/account.php" style="color:var(--accent);white-space:nowrap;"><i class="fa-solid fa-location-dot" style="margin-right:.2rem;"></i>Save addresses</a> in My Account for faster checkout.
@@ -468,9 +542,54 @@ $pageTitle = 'Checkout | BreadBreak';
 
                 </div>
             </div>
+
+            <!-- Senior Citizen / PWD Discount Card -->
+            <div class="checkout-card">
+                <div class="checkout-card-header" style="display:flex;align-items:center;justify-content:space-between;">
+                    <h2><i class="fa-solid fa-id-card" style="margin-right:.5rem;color:var(--accent)"></i>Senior Citizen / PWD Discount</h2>
+                    <span style="font-size:.78rem;color:var(--muted);font-weight:600;">RA 9994 &amp; RA 10754</span>
+                </div>
+                <div class="checkout-card-body">
+                    <div style="display:flex;align-items:center;gap:.6rem;cursor:pointer;">
+                        <input type="checkbox" id="apply-discount-checkbox" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;" />
+                        <label for="apply-discount-checkbox" style="font-size:.92rem;font-weight:700;color:var(--brown-900);cursor:pointer;margin:0;">
+                            Apply Senior Citizen / PWD Discount (20% Off + VAT Exempt)
+                        </label>
+                    </div>
+
+                    <div id="discount-fields-wrap" style="display:none;margin-top:1.2rem;padding-top:1.2rem;border-top:1px dashed var(--border);">
+                        <div style="display:flex;gap:1.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+                            <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.88rem;font-weight:600;color:var(--brown-800);">
+                                <input type="radio" name="discount_type_radio" value="senior" checked style="accent-color:var(--accent);" />
+                                <span><i class="fa-solid fa-person-cane" style="margin-right:.25rem;color:var(--accent);"></i>Senior Citizen</span>
+                            </label>
+                            <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.88rem;font-weight:600;color:var(--brown-800);">
+                                <input type="radio" name="discount_type_radio" value="pwd" style="accent-color:var(--accent);" />
+                                <span><i class="fa-solid fa-wheelchair" style="margin-right:.25rem;color:var(--accent);"></i>Person with Disability (PWD)</span>
+                            </label>
+                        </div>
+
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.9rem;">
+                            <label style="display:flex;flex-direction:column;gap:.35rem;font-size:.85rem;font-weight:600;color:var(--brown-800);">
+                                ID Number <span style="color:#c00;">*</span>
+                                <input type="text" id="discount-id-input" placeholder="e.g. SC-123456 / PWD-7890" style="border:1.5px solid var(--border);border-radius:8px;padding:.55rem .8rem;font-family:inherit;font-size:.9rem;" />
+                            </label>
+                            <label style="display:flex;flex-direction:column;gap:.35rem;font-size:.85rem;font-weight:600;color:var(--brown-800);">
+                                Cardholder Full Name <span style="color:#c00;">*</span>
+                                <input type="text" id="discount-name-input" placeholder="Name as printed on ID" style="border:1.5px solid var(--border);border-radius:8px;padding:.55rem .8rem;font-family:inherit;font-size:.9rem;" />
+                            </label>
+                        </div>
+
+                        <div class="checkout-alert alert-info" style="margin-top:.9rem;margin-bottom:0;font-size:.82rem;padding:.65rem .9rem;">
+                            <i class="fa-solid fa-circle-info"></i>
+                            <span><strong>Verification Policy:</strong> Please present your physical Senior Citizen or PWD ID to our delivery rider upon handover to validate the discount.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
-        <!-- ── Right: Summary + Payment ── -->
+        <!-- ── Right Column: Order Summary + GCash Payment ── -->
         <div class="summary-panel">
             <div class="summary-panel-header">
                 <h2>Order Summary</h2>
@@ -487,36 +606,63 @@ $pageTitle = 'Checkout | BreadBreak';
                 </div>
                 <?php endforeach; ?>
 
-                <!-- Subtotal -->
+                <!-- Subtotal Base -->
                 <div class="summary-row" style="border-top:1px solid var(--border);margin-top:.5rem;padding-top:.6rem;">
-                    <span>Subtotal</span>
-                    <span>₱<?php echo number_format($cartTotal, 2); ?></span>
+                    <span>Subtotal (VAT-Inc)</span>
+                    <span id="summary-subtotal">₱<?php echo number_format($cartTotal, 2); ?></span>
                 </div>
 
-                <!-- Delivery fee (dynamic) -->
+                <!-- Senior/PWD Exemption & Discount Rows -->
+                <div class="summary-row" id="summary-vat-exempt-row" style="display:none;color:#1a6645;font-weight:600;">
+                    <span><i class="fa-solid fa-percent" style="margin-right:.3rem;font-size:.85em;"></i>Less: 12% VAT Exemption</span>
+                    <span id="summary-vat-exempt-amount">-₱0.00</span>
+                </div>
+                <div class="summary-row" id="summary-discount-row" style="display:none;color:#1a6645;font-weight:600;">
+                    <span><i class="fa-solid fa-tag" style="margin-right:.3rem;font-size:.85em;"></i>Less: 20% Senior/PWD Disc</span>
+                    <span id="summary-discount-amount">-₱0.00</span>
+                </div>
+
+                <!-- Regular VAT Breakdown Rows -->
+                <div class="summary-row" id="summary-vatable-row" style="font-size:.82rem;color:var(--muted);">
+                    <span>VATable Sales</span>
+                    <span id="summary-vatable-amount">₱<?php echo number_format($cartTotal / 1.12, 2); ?></span>
+                </div>
+                <div class="summary-row" id="summary-vat-row" style="font-size:.82rem;color:var(--muted);">
+                    <span>12% VAT (Included)</span>
+                    <span id="summary-vat-amount">₱<?php echo number_format($cartTotal - ($cartTotal / 1.12), 2); ?></span>
+                </div>
+
+                <!-- Delivery Fee Row -->
                 <div class="summary-row" id="summary-delivery-row">
                     <span><i class="fa-solid fa-truck" style="margin-right:.3rem;font-size:.85em;"></i>Delivery Fee</span>
                     <span id="summary-delivery-fee" style="color:var(--muted);">—</span>
                 </div>
 
-                <!-- Grand total -->
+                <!-- Grand Total Row -->
                 <div class="summary-row total-row">
-                    <span>Total</span>
+                    <span>Total to Pay</span>
                     <span class="summary-total-amount" id="summary-grand-total">₱<?php echo number_format($cartTotal, 2); ?></span>
                 </div>
 
                 <p class="summary-note">
                     <i class="fa-solid fa-lock" style="margin-right:.35rem;"></i>
-                    Prices are confirmed from our database. You will be redirected to Xendit's secure GCash payment page.
+                    Prices and taxes are verified from our database. You will be redirected to Xendit's secure GCash payment gateway.
                 </p>
             </div>
             <div class="summary-panel-footer">
                 <form method="POST" id="checkout-form">
                     <input type="hidden" name="action" value="confirm_order" />
                     <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['checkout_csrf']); ?>" />
-                    <!-- Hidden fields filled by JS -->
+                    
+                    <!-- Hidden delivery fields -->
                     <input type="hidden" name="delivery_address" id="hidden-delivery-address" value="" />
                     <input type="hidden" name="delivery_fee" id="hidden-delivery-fee" value="0" />
+
+                    <!-- Hidden discount fields -->
+                    <input type="hidden" name="apply_discount" id="hidden-apply-discount" value="0" />
+                    <input type="hidden" name="discount_type" id="hidden-discount-type" value="none" />
+                    <input type="hidden" name="discount_id_number" id="hidden-discount-id-number" value="" />
+                    <input type="hidden" name="discount_name" id="hidden-discount-name" value="" />
 
                     <button class="btn btn-primary" type="submit" id="place-order-btn" disabled style="width:100%;font-size:1rem;padding:.9rem 1.2rem;opacity:.6;cursor:not-allowed;">
                         <i class="fa-solid fa-mobile-screen" style="margin-right:.5rem;"></i>
@@ -551,6 +697,25 @@ $pageTitle = 'Checkout | BreadBreak';
     const grandTotalEl    = document.getElementById('summary-grand-total');
     const cartSubtotal    = <?php echo json_encode($cartTotal); ?>;
 
+    // VAT & Discount elements
+    const applyDiscountCb = document.getElementById('apply-discount-checkbox');
+    const discountWrap    = document.getElementById('discount-fields-wrap');
+    const discountIdInput = document.getElementById('discount-id-input');
+    const discountNameInput= document.getElementById('discount-name-input');
+    const hiddenApplyDisc = document.getElementById('hidden-apply-discount');
+    const hiddenDiscType  = document.getElementById('hidden-discount-type');
+    const hiddenDiscId    = document.getElementById('hidden-discount-id-number');
+    const hiddenDiscName  = document.getElementById('hidden-discount-name');
+
+    const vatExemptRow    = document.getElementById('summary-vat-exempt-row');
+    const vatExemptAmtEl  = document.getElementById('summary-vat-exempt-amount');
+    const discountRow     = document.getElementById('summary-discount-row');
+    const discountAmtEl   = document.getElementById('summary-discount-amount');
+    const vatableRow      = document.getElementById('summary-vatable-row');
+    const vatableAmtEl    = document.getElementById('summary-vatable-amount');
+    const vatRow          = document.getElementById('summary-vat-row');
+    const vatAmtEl        = document.getElementById('summary-vat-amount');
+
     // Saved address mode elements
     const savedAddrList   = document.getElementById('saved-address-list');
     const radios          = savedAddrList ? savedAddrList.querySelectorAll('[data-address-radio]') : [];
@@ -562,29 +727,68 @@ $pageTitle = 'Checkout | BreadBreak';
     const addrTextarea    = document.getElementById('delivery-address-input');
     const resultBox       = document.getElementById('zone-check-result');
 
+    let currentDeliveryFee = null;
     let checkTimer = null;
     let lastChecked = '';
     let usingOtherAddr = false;
 
     // ── Helpers ───────────────────────────────────────────────────────────────
     function formatPHP(amount) {
-        return '₱' + amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        return '₱' + Number(amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
-    function updateSummary(fee) {
+    function recalculateTotal() {
+        const isSeniorOrPwd = applyDiscountCb && applyDiscountCb.checked;
+        let netItemsTotal = cartSubtotal;
+
+        if (isSeniorOrPwd) {
+            // Philippine Standard:
+            // 1. VAT Exempt base = cartSubtotal / 1.12
+            // 2. 12% VAT removed = cartSubtotal - (cartSubtotal / 1.12)
+            // 3. 20% discount on VAT Exempt base = (cartSubtotal / 1.12) * 0.20
+            const vatExemptBase = cartSubtotal / 1.12;
+            const vatExemptAmount = cartSubtotal - vatExemptBase;
+            const discountAmount = vatExemptBase * 0.20;
+            netItemsTotal = vatExemptBase - discountAmount;
+
+            vatExemptRow.style.display   = 'flex';
+            vatExemptAmtEl.textContent   = '-' + formatPHP(vatExemptAmount);
+            discountRow.style.display    = 'flex';
+            discountAmtEl.textContent    = '-' + formatPHP(discountAmount);
+
+            vatableRow.style.display     = 'none';
+            vatRow.style.display         = 'none';
+        } else {
+            const vatableSales = cartSubtotal / 1.12;
+            const vatAmount    = cartSubtotal - vatableSales;
+
+            vatExemptRow.style.display   = 'none';
+            discountRow.style.display    = 'none';
+
+            vatableRow.style.display     = 'flex';
+            vatableAmtEl.textContent     = formatPHP(vatableSales);
+            vatRow.style.display         = 'flex';
+            vatAmtEl.textContent         = formatPHP(vatAmount);
+        }
+
+        const fee = currentDeliveryFee !== null ? currentDeliveryFee : 0;
+        const totalToPay = netItemsTotal + fee;
+        grandTotalEl.textContent = formatPHP(totalToPay);
+    }
+
+    function updateSummaryFee(fee) {
+        currentDeliveryFee = fee;
         if (fee === null) {
             feeDisplay.textContent = '—';
             feeDisplay.style.color = 'var(--muted)';
-            grandTotalEl.textContent = formatPHP(cartSubtotal);
         } else if (fee === 0) {
             feeDisplay.textContent = 'Free';
             feeDisplay.style.color = '#1a6645';
-            grandTotalEl.textContent = formatPHP(cartSubtotal);
         } else {
             feeDisplay.textContent = formatPHP(fee);
             feeDisplay.style.color = 'var(--text)';
-            grandTotalEl.textContent = formatPHP(cartSubtotal + fee);
         }
+        recalculateTotal();
     }
 
     function setOrderButton(enabled, hint) {
@@ -600,6 +804,57 @@ $pageTitle = 'Checkout | BreadBreak';
         box.className = 'zone-check-result zone-' + type;
         const icons = { loading:'fa-spinner fa-spin', allowed:'fa-circle-check', blocked:'fa-circle-xmark', warning:'fa-triangle-exclamation' };
         box.innerHTML = '<i class="fa-solid ' + (icons[type] || 'fa-info') + '"></i><span>' + message + '</span>';
+    }
+
+    // ── Discount Toggle Listeners ──────────────────────────────────────────────
+    if (applyDiscountCb) {
+        applyDiscountCb.addEventListener('change', function () {
+            const checked = this.checked;
+            discountWrap.style.display = checked ? 'block' : 'none';
+            hiddenApplyDisc.value = checked ? '1' : '0';
+
+            const selectedType = document.querySelector('input[name="discount_type_radio"]:checked')?.value || 'senior';
+            hiddenDiscType.value = checked ? selectedType : 'none';
+
+            if (checked) {
+                hiddenDiscId.value   = discountIdInput.value.trim();
+                hiddenDiscName.value = discountNameInput.value.trim();
+                if (discountIdInput.value.trim() === '') discountIdInput.focus();
+            } else {
+                hiddenDiscId.value   = '';
+                hiddenDiscName.value = '';
+            }
+
+            recalculateTotal();
+            validateDiscountAndButton();
+        });
+
+        document.querySelectorAll('input[name="discount_type_radio"]').forEach(r => {
+            r.addEventListener('change', function () {
+                if (applyDiscountCb.checked) hiddenDiscType.value = this.value;
+            });
+        });
+
+        discountIdInput.addEventListener('input', function () {
+            hiddenDiscId.value = this.value.trim();
+            validateDiscountAndButton();
+        });
+
+        discountNameInput.addEventListener('input', function () {
+            hiddenDiscName.value = this.value.trim();
+            validateDiscountAndButton();
+        });
+    }
+
+    function validateDiscountAndButton() {
+        if (!applyDiscountCb.checked) return true;
+        const idVal   = discountIdInput.value.trim();
+        const nameVal = discountNameInput.value.trim();
+        if (!idVal || !nameVal) {
+            setOrderButton(false, 'Please provide Senior/PWD ID Number and Cardholder Name.');
+            return false;
+        }
+        return true;
     }
 
     // ── Zone check API call ───────────────────────────────────────────────────
@@ -620,8 +875,6 @@ $pageTitle = 'Checkout | BreadBreak';
 
     // ── SAVED ADDRESS MODE ────────────────────────────────────────────────────
     if (savedAddrList && radios.length > 0) {
-
-        // Pre-check all addresses on page load
         const addressData = <?php
             $addrJsonList = array_map(fn($a) => [
                 'id'   => $a['id'],
@@ -646,7 +899,6 @@ $pageTitle = 'Checkout | BreadBreak';
                     } else {
                         statusEl.innerHTML = '<span style="color:#891515;font-size:.8rem;"><i class="fa-solid fa-circle-xmark"></i> Outside delivery zone</span>';
                     }
-                    // Store zone data on the radio input
                     const radio = savedAddrList.querySelector('[data-address-radio][value="' + CSS.escape(addr.text) + '"]') ||
                                   [...radios].find(r => r.value === addr.text);
                     if (radio) {
@@ -655,7 +907,6 @@ $pageTitle = 'Checkout | BreadBreak';
                         radio.dataset.zoneMinOrder= data.min_order ?? 0;
                     }
                 }
-                // After all checked, init based on currently selected radio
                 if (checkedCount === addressData.length) {
                     applySelectedRadio();
                 }
@@ -667,38 +918,39 @@ $pageTitle = 'Checkout | BreadBreak';
             const checked = [...radios].find(r => r.checked);
             if (!checked) { setOrderButton(false, 'Select a delivery address to continue.'); return; }
 
-            // Update card styles
             addrCards.forEach(c => c.classList.remove('is-checked'));
             if (checked.closest('[data-address-card]')) checked.closest('[data-address-card]').classList.add('is-checked');
 
             const allowed  = checked.dataset.zoneAllowed;
-            const fee      = parseInt(checked.dataset.zoneFee ?? 0, 10);
-            const minOrder = parseInt(checked.dataset.zoneMinOrder ?? 0, 10);
+            const fee      = parseFloat(checked.dataset.zoneFee ?? 0);
+            const minOrder = parseFloat(checked.dataset.zoneMinOrder ?? 0);
 
             if (allowed === undefined) {
-                // Still loading
                 setOrderButton(false, 'Checking delivery zone…');
-                updateSummary(null);
+                updateSummaryFee(null);
                 return;
             }
             if (allowed === '0') {
                 hiddenFee.value  = 0;
                 hiddenAddr.value = '';
-                updateSummary(null);
+                updateSummaryFee(null);
                 setOrderButton(false, 'This address is outside our delivery zone.');
                 return;
             }
             if (minOrder > 0 && cartSubtotal < minOrder) {
                 hiddenFee.value  = 0;
                 hiddenAddr.value = '';
-                updateSummary(null);
+                updateSummaryFee(null);
                 setOrderButton(false, 'Minimum order of ₱' + minOrder.toLocaleString() + ' required for this zone.');
                 return;
             }
             hiddenAddr.value = checked.value;
             hiddenFee.value  = fee;
-            updateSummary(fee);
-            setOrderButton(true, '');
+            updateSummaryFee(fee);
+
+            if (validateDiscountAndButton()) {
+                setOrderButton(true, '');
+            }
         }
 
         radios.forEach(function (radio) {
@@ -710,7 +962,6 @@ $pageTitle = 'Checkout | BreadBreak';
             });
         });
 
-        // "Use a different address" toggle
         if (useOtherToggle && otherAddrWrap) {
             useOtherToggle.addEventListener('click', function () {
                 usingOtherAddr = !usingOtherAddr;
@@ -719,15 +970,13 @@ $pageTitle = 'Checkout | BreadBreak';
                     ? '<i class="fa-solid fa-chevron-up" style="margin-right:.4rem;"></i> Cancel — use saved address'
                     : '<i class="fa-solid fa-plus" style="margin-right:.4rem;"></i> Use a different address';
                 if (!usingOtherAddr) {
-                    // Revert to radio selection
                     radios.forEach(r => { if (r.checked) r.dispatchEvent(new Event('change')); });
                 } else {
-                    // Uncheck all radios, reset button
                     radios.forEach(r => r.checked = false);
                     addrCards.forEach(c => c.classList.remove('is-checked'));
                     hiddenAddr.value = '';
                     hiddenFee.value = 0;
-                    updateSummary(null);
+                    updateSummaryFee(null);
                     setOrderButton(false, 'Enter your delivery address to continue.');
                     if (resultBox) resultBox.style.display = 'none';
                     lastChecked = '';
@@ -736,35 +985,34 @@ $pageTitle = 'Checkout | BreadBreak';
             });
         }
 
-        // Init: trigger apply after a tick (zone checks may still be loading)
         setTimeout(applySelectedRadio, 100);
     }
 
-    // ── FREE-TEXT MODE (no saved addresses, OR "other address") ──────────────
+    // ── FREE-TEXT MODE ────────────────────────────────────────────────────────
     if (addrTextarea) {
         async function runFreeTextCheck(address) {
             if (address === lastChecked) return;
             lastChecked = address;
             if (resultBox) showInlineResult(resultBox, 'loading', 'Checking delivery availability…');
             setOrderButton(false, 'Checking your address…');
-            updateSummary(null);
+            updateSummaryFee(null);
 
             await checkZone(address, function (data) {
                 hiddenAddr.value = address;
                 if (data.allowed) {
-                    const fee = data.delivery_fee ?? 0;
+                    const fee = parseFloat(data.delivery_fee ?? 0);
                     hiddenFee.value = fee;
-                    updateSummary(fee);
+                    updateSummaryFee(fee);
                     if (resultBox) showInlineResult(resultBox, data.drive_warning ? 'warning' : 'allowed', data.message || 'Delivery available.');
                     if (data.min_order && cartSubtotal < data.min_order) {
                         if (resultBox) showInlineResult(resultBox, 'blocked', 'Minimum order of ₱' + data.min_order.toLocaleString() + ' required for this zone.');
                         setOrderButton(false, 'Minimum order not met for your zone.');
-                    } else {
+                    } else if (validateDiscountAndButton()) {
                         setOrderButton(true, '');
                     }
                 } else {
                     hiddenFee.value = 0;
-                    updateSummary(null);
+                    updateSummaryFee(null);
                     if (resultBox) showInlineResult(resultBox, 'blocked', data.message || "Sorry, we don't deliver to your area yet.");
                     setOrderButton(false, 'Delivery not available to this address.');
                 }
@@ -777,7 +1025,7 @@ $pageTitle = 'Checkout | BreadBreak';
             if (val.length < 5) {
                 if (resultBox) resultBox.style.display = 'none';
                 if (!savedAddrList) setOrderButton(false, 'Enter your delivery address to continue.');
-                updateSummary(null);
+                updateSummaryFee(null);
                 lastChecked = '';
                 return;
             }
@@ -789,7 +1037,6 @@ $pageTitle = 'Checkout | BreadBreak';
             if (val.length >= 5) { clearTimeout(checkTimer); runFreeTextCheck(val); }
         });
 
-        // Pre-fill check on load (no saved addresses path)
         if (!savedAddrList) {
             const prefilled = addrTextarea.value.trim();
             if (prefilled.length >= 5) runFreeTextCheck(prefilled);
