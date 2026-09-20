@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS orders (
     customer_id INT NOT NULL,
     reference_id VARCHAR(32) NOT NULL UNIQUE,
     status ENUM('pending', 'processing', 'completed', 'cancelled') NOT NULL DEFAULT 'pending',
+    fulfillment_type ENUM('delivery', 'pickup') NOT NULL DEFAULT 'delivery',
     subtotal DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     vatable_sales DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     vat_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,

@@ -47,3 +47,4 @@ if (php_sapi_name() === 'cli') {
     }
     echo "</ul><p><a href='/BreadBreak/checkout.php'>Go to Checkout</a></p>";
 }
+

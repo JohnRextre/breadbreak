@@ -18,7 +18,7 @@ if ($ref) {
 
     // Load order (must belong to this customer)
     $oStmt = $pdo->prepare(
-        "SELECT id, reference_id, status, subtotal, vatable_sales, vat_amount, vat_exempt_sales,
+        "SELECT id, reference_id, status, fulfillment_type, subtotal, vatable_sales, vat_amount, vat_exempt_sales,
                 discount_type, discount_amount, discount_id_number, discount_name,
                 delivery_fee, delivery_address, total_amount, created_at
          FROM orders
@@ -177,6 +177,19 @@ $pageTitle = 'Order Confirmation | BreadBreak';
                 <dt>Total Amount</dt>
                 <dd><strong style="color:var(--accent)">₱<?php echo number_format((float) ($payment['amount'] ?? 0), 2); ?></strong></dd>
 
+                <dt>Fulfillment</dt>
+                <dd>
+                    <?php if (($order['fulfillment_type'] ?? 'delivery') === 'pickup'): ?>
+                        <span style="background:#e8f7ef;color:#1a6645;border:1px solid #a3d9bc;padding:.15rem .6rem;border-radius:100px;font-weight:700;font-size:.82rem;">
+                            <i class="fa-solid fa-store"></i> Store Pickup (Free)
+                        </span>
+                    <?php else: ?>
+                        <span style="background:#fff3e0;color:#b85c00;border:1px solid #f5c842;padding:.15rem .6rem;border-radius:100px;font-weight:700;font-size:.82rem;">
+                            <i class="fa-solid fa-truck"></i> Delivery
+                        </span>
+                    <?php endif; ?>
+                </dd>
+
                 <?php if (!empty($order['discount_type']) && $order['discount_type'] !== 'none'): ?>
                 <dt style="grid-column:1/-1;margin-top:.3rem;border-top:1px solid var(--border);padding-top:.5rem;">
                     <i class="fa-solid fa-id-card" style="margin-right:.3rem;color:var(--accent);"></i>Applied Discount
@@ -191,7 +204,20 @@ $pageTitle = 'Order Confirmation | BreadBreak';
                 </dd>
                 <?php endif; ?>
 
-                <?php if (!empty($order['delivery_address'])): ?>
+                <?php if (($order['fulfillment_type'] ?? 'delivery') === 'pickup'): ?>
+                <dt style="grid-column:1/-1;margin-top:.3rem;border-top:1px solid var(--border);padding-top:.5rem;">
+                    <i class="fa-solid fa-store" style="margin-right:.3rem;color:var(--accent);"></i>Pickup Location
+                </dt>
+                <dd style="grid-column:1/-1;">
+                    <strong>BreadBreak Bakery — Estrella Village Branch</strong><br>
+                    <span style="color:var(--muted);">Estrella Village, Guiguinto, Bulacan</span><br>
+                    <small style="color:var(--muted);"><i class="fa-solid fa-clock" style="margin-right:.25rem;color:var(--accent);"></i>7:00 AM – 8:00 PM · Ready in 30–45 mins</small>
+
+                    <div style="margin-top:.8rem;border-radius:12px;overflow:hidden;border:1.5px solid var(--border);max-width:480px;">
+                        <img src="/BreadBreak/assets/breadbreak_png/breadbreak_location.png" alt="BreadBreak Location" style="width:100%;height:auto;display:block;" />
+                    </div>
+                </dd>
+                <?php elseif (!empty($order['delivery_address'])): ?>
                 <dt style="grid-column:1/-1;margin-top:.3rem;border-top:1px solid var(--border);padding-top:.5rem;">
                     <i class="fa-solid fa-location-dot" style="margin-right:.3rem;color:var(--accent);"></i>Delivery Address
                 </dt>

@@ -1,8 +1,11 @@
 <?php
 // ============================================================
 // checkout.php  –  BreadBreak order review + Xendit payment
-// Includes: Delivery Zone check, Address Book, 12% VAT,
-// and Senior Citizen / PWD Discount (20% + VAT Exemption)
+// Features:
+// 1. Delivery vs Store Pickup (with branch location map)
+// 2. Saved Address Book & Real-time Zone Check
+// 3. 12% VAT Breakdown & Senior Citizen / PWD 20% Discount
+// 4. Smart ID & Name validation checkers
 // ============================================================
 require_once __DIR__ . '/includes/auth.php';
 requireRole('customer');
@@ -17,6 +20,7 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS orders (
     customer_id INT NOT NULL,
     reference_id VARCHAR(32) NOT NULL UNIQUE,
     status ENUM('pending','processing','completed','cancelled') NOT NULL DEFAULT 'pending',
+    fulfillment_type ENUM('delivery','pickup') NOT NULL DEFAULT 'delivery',
     subtotal DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     vatable_sales DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     vat_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
@@ -34,40 +38,9 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS orders (
     CONSTRAINT fk_order_customer FOREIGN KEY (customer_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE RESTRICT
 )");
 
-$pdo->exec("CREATE TABLE IF NOT EXISTS order_items (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    order_id INT NOT NULL,
-    variant_id INT NOT NULL,
-    product_name VARCHAR(255) NOT NULL,
-    service_size VARCHAR(100) NOT NULL,
-    sku VARCHAR(80) NOT NULL,
-    unit_price DECIMAL(10,2) NOT NULL,
-    quantity INT NOT NULL DEFAULT 1,
-    line_total DECIMAL(10,2) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_order_item_order FOREIGN KEY (order_id) REFERENCES orders(id) ON UPDATE CASCADE ON DELETE CASCADE,
-    CONSTRAINT fk_order_item_variant FOREIGN KEY (variant_id) REFERENCES inventory_item_variants(id) ON UPDATE CASCADE ON DELETE RESTRICT
-)");
-
-$pdo->exec("CREATE TABLE IF NOT EXISTS payments (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    order_id INT NOT NULL,
-    xendit_payment_request_id VARCHAR(255) NOT NULL UNIQUE,
-    reference_id VARCHAR(64) NOT NULL,
-    amount DECIMAL(10,2) NOT NULL,
-    currency CHAR(3) NOT NULL DEFAULT 'PHP',
-    payment_method VARCHAR(60) NULL,
-    payment_channel VARCHAR(60) NULL,
-    status ENUM('pending','paid','failed','expired','voided') NOT NULL DEFAULT 'pending',
-    xendit_raw_response TEXT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    CONSTRAINT fk_payment_order FOREIGN KEY (order_id) REFERENCES orders(id) ON UPDATE CASCADE ON DELETE RESTRICT
-)");
-
 $customerId = (int) $_SESSION['user_id'];
 
-// ── Load cart items with FRESH prices from DB (never trust JS values) ──
+// ── Load cart items with FRESH prices from DB ──
 $cartItems  = [];
 $cartTotal  = 0.0;
 $checkoutError = '';
@@ -114,7 +87,7 @@ if (empty($cartItems)) {
     exit;
 }
 
-// ── Load delivery settings for server-side validation ──
+// ── Load delivery settings ──
 function getDeliverySetting(PDO $pdo, string $key, string $default = ''): string {
     $s = $pdo->prepare('SELECT setting_value FROM delivery_settings WHERE setting_key = :k LIMIT 1');
     $s->execute(['k' => $key]);
@@ -125,7 +98,6 @@ $deliveryMode  = getDeliverySetting($pdo, 'delivery_mode', 'simple');
 $inRangeAreas  = json_decode(getDeliverySetting($pdo, 'in_range_areas', '[]'), true) ?: [];
 $deliveryZones = json_decode(getDeliverySetting($pdo, 'delivery_zones', '[]'), true) ?: [];
 
-// ── Server-side delivery zone check (same logic as API, inline) ──
 function serverCheckDelivery(string $address, string $mode, array $inAreas, array $zones): array {
     if ($mode === 'simple') {
         $normalized = mb_strtolower(trim($address));
@@ -143,52 +115,65 @@ function serverCheckDelivery(string $address, string $mode, array $inAreas, arra
 // ── Handle POST: create order + payment request ──
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confirm_order') {
 
-    // CSRF check
     $token = $_POST['csrf_token'] ?? '';
     if (!hash_equals((string) ($_SESSION['checkout_csrf'] ?? ''), $token)) {
         $checkoutError = 'Invalid form submission. Please try again.';
     }
 
-    // Delivery address validation
-    $deliveryAddress = trim($_POST['delivery_address'] ?? '');
-    $deliveryFeePost = max(0, (float) ($_POST['delivery_fee'] ?? 0));
+    $fulfillmentType = in_array($_POST['fulfillment_type'] ?? '', ['delivery', 'pickup'], true) ? $_POST['fulfillment_type'] : 'delivery';
+    $deliveryAddress = '';
+    $deliveryFeePost = 0.00;
 
-    if (!$checkoutError && $deliveryAddress === '') {
-        $checkoutError = 'Please enter or select a delivery address.';
+    if ($fulfillmentType === 'pickup') {
+        $deliveryAddress = 'BreadBreak Bakery - Estrella Village, Guiguinto, Bulacan (Store Pickup)';
+        $deliveryFeePost = 0.00;
+    } else {
+        $deliveryAddress = trim($_POST['delivery_address'] ?? '');
+        $deliveryFeePost = max(0, (float) ($_POST['delivery_fee'] ?? 0));
+
+        if (!$checkoutError && $deliveryAddress === '') {
+            $checkoutError = 'Please select or enter your delivery address.';
+        }
+
+        if (!$checkoutError) {
+            $zoneCheck = serverCheckDelivery($deliveryAddress, $deliveryMode, $inRangeAreas, $deliveryZones);
+            if (!$zoneCheck['allowed']) {
+                $checkoutError = "Sorry, we don't deliver to your area yet. BreadBreak delivers within 8km of our branch in Estrella Village, Guiguinto.";
+            }
+            if ($deliveryMode === 'simple') {
+                $deliveryFeePost = (float) $zoneCheck['fee'];
+            }
+        }
     }
 
-    if (!$checkoutError) {
-        $zoneCheck = serverCheckDelivery($deliveryAddress, $deliveryMode, $inRangeAreas, $deliveryZones);
-        if (!$zoneCheck['allowed']) {
-            $checkoutError = "Sorry, we don't deliver to your area yet. BreadBreak delivers within 8km of our branch in Estrella Village, Guiguinto.";
-        }
-        if ($deliveryMode === 'simple') {
-            $deliveryFeePost = (float) $zoneCheck['fee'];
-        }
-    }
-
-    // Discount validation & server-side recalculation
+    // Discount validation with strict checker
     $applyDiscount    = !empty($_POST['apply_discount']) && $_POST['apply_discount'] === '1';
     $discountTypePost = in_array($_POST['discount_type'] ?? '', ['senior', 'pwd'], true) ? $_POST['discount_type'] : 'none';
     $discountIdNumber = trim(strip_tags($_POST['discount_id_number'] ?? ''));
     $discountName     = trim(strip_tags($_POST['discount_name'] ?? ''));
 
     if (!$checkoutError && $applyDiscount) {
-        if ($discountIdNumber === '') {
-            $checkoutError = 'Please provide the Senior Citizen or PWD ID number.';
-        } elseif ($discountName === '') {
-            $checkoutError = 'Please provide the cardholder\'s full name as printed on the ID.';
+        // ID number validation
+        $cleanId = preg_replace('/\s+/', ' ', $discountIdNumber);
+        $idLen = strlen($cleanId);
+        $isRepeated = preg_match('/^(.)\1+$/', $cleanId);
+
+        if ($idLen < 4 || $idLen > 30 || !preg_match('/^[A-Za-z0-9][A-Za-z0-9\-\s\/]{2,28}[A-Za-z0-9]$/', $cleanId) || $isRepeated) {
+            $checkoutError = 'Please enter a valid Senior Citizen or PWD ID number (4 to 30 characters).';
+        }
+
+        // Cardholder name validation
+        $cleanName = preg_replace('/\s+/', ' ', $discountName);
+        $nameLen = strlen($cleanName);
+        if (!$checkoutError && ($nameLen < 4 || $nameLen > 70 || !preg_match('/^[A-Za-zÀ-ÿ\s\.\-]{4,70}$/', $cleanName))) {
+            $checkoutError = 'Please enter the cardholder\'s valid full name (letters only, as printed on the ID).';
         }
     }
 
-    // Exact VAT and Discount formulas (Philippine BIR & RA 9994 / RA 10754 Standard)
-    $subtotal = $cartTotal; // Items total (VAT-inclusive prices)
+    // Calculations
+    $subtotal = $cartTotal;
 
     if ($applyDiscount && in_array($discountTypePost, ['senior', 'pwd'], true)) {
-        // Senior/PWD:
-        // 1. Remove 12% VAT: vat_exempt_sales = subtotal / 1.12
-        // 2. 20% discount on vat_exempt_sales: discount_amount = vat_exempt_sales * 0.20
-        // 3. Net items total: vat_exempt_sales - discount_amount
         $vatExemptSales = round($subtotal / 1.12, 2);
         $vatableSales   = 0.00;
         $vatAmount      = 0.00;
@@ -196,7 +181,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
         $netItemsTotal  = round($vatExemptSales - $discountAmount, 2);
         $discountType   = $discountTypePost;
     } else {
-        // Regular (12% VAT inclusive):
         $vatableSales   = round($subtotal / 1.12, 2);
         $vatAmount      = round($subtotal - $vatableSales, 2);
         $vatExemptSales = 0.00;
@@ -210,7 +194,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
     $grandTotal = round($netItemsTotal + $deliveryFeePost, 2);
 
     if (!$checkoutError) {
-        // Re-validate stock one more time before touching DB
         foreach ($cartItems as $item) {
             if ($item['quantity'] > $item['stock_qty']) {
                 $checkoutError = htmlspecialchars($item['product_name']) . ' (' . htmlspecialchars($item['service_size']) . ') no longer has enough stock. Please update your cart.';
@@ -222,20 +205,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
     if (!$checkoutError) {
         $pdo->beginTransaction();
         try {
-            // 1. Create order row with full VAT & Discount snapshot
             $referenceId = generateReferenceId();
             $pdo->prepare(
                 "INSERT INTO orders 
-                    (customer_id, reference_id, status, subtotal, vatable_sales, vat_amount, vat_exempt_sales,
+                    (customer_id, reference_id, status, fulfillment_type, subtotal, vatable_sales, vat_amount, vat_exempt_sales,
                      discount_type, discount_amount, discount_id_number, discount_name,
                      delivery_fee, delivery_address, total_amount)
                  VALUES 
-                    (:cid, :ref, 'pending', :sub, :vsales, :vamt, :vexempt,
+                    (:cid, :ref, 'pending', :ftype, :sub, :vsales, :vamt, :vexempt,
                      :dtype, :damt, :did, :dname,
                      :fee, :addr, :total)"
             )->execute([
                 'cid'      => $customerId,
                 'ref'      => $referenceId,
+                'ftype'    => $fulfillmentType,
                 'sub'      => $subtotal,
                 'vsales'   => $vatableSales,
                 'vamt'     => $vatAmount,
@@ -250,7 +233,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
             ]);
             $orderId = (int) $pdo->lastInsertId();
 
-            // 2. Create order_items rows
             $insertItem = $pdo->prepare(
                 "INSERT INTO order_items
                     (order_id, variant_id, product_name, service_size, sku, unit_price, quantity, line_total)
@@ -269,29 +251,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
                 ]);
             }
 
-            // 3. Log delivery zone analytics
-            try {
-                $pdo->prepare(
-                    "INSERT INTO delivery_zone_logs
-                        (order_id, customer_address, zone, delivery_fee_charged, mode_used)
-                     VALUES (:oid, :addr, 'zone_1', :fee, :mode)"
-                )->execute(['oid' => $orderId, 'addr' => $deliveryAddress, 'fee' => $deliveryFeePost, 'mode' => $deliveryMode]);
-            } catch (Throwable) { /* non-fatal */ }
+            if ($fulfillmentType === 'delivery') {
+                try {
+                    $pdo->prepare(
+                        "INSERT INTO delivery_zone_logs
+                            (order_id, customer_address, zone, delivery_fee_charged, mode_used)
+                         VALUES (:oid, :addr, 'zone_1', :fee, :mode)"
+                    )->execute(['oid' => $orderId, 'addr' => $deliveryAddress, 'fee' => $deliveryFeePost, 'mode' => $deliveryMode]);
+                } catch (Throwable) { /* non-fatal */ }
+            }
 
-            // 4. Fetch customer name + email for Xendit
-            $custStmt = $pdo->prepare('SELECT first_name, last_name, email, phone FROM users WHERE id = :id LIMIT 1');
-            $custStmt->execute(['id' => $customerId]);
-            $customer = $custStmt->fetch();
-
-            // 5. Build description
+            // Description for Xendit
             $descParts = array_map(fn($it) => $it['product_name'] . ' (' . $it['service_size'] . ') x' . $it['quantity'], $cartItems);
             $description = implode(', ', $descParts);
-            if ($discountType !== 'none') {
-                $description .= ' [' . strtoupper($discountType) . ' Discount]';
-            }
+            $description .= ($fulfillmentType === 'pickup' ? ' [Pickup]' : ' [Delivery]');
+            if ($discountType !== 'none') $description .= ' [' . strtoupper($discountType) . ' Disc]';
             if (strlen($description) > 255) $description = substr($description, 0, 252) . '...';
 
-            // 6. Call Xendit /v3/payment_requests with GCash
             $xenditPayload = [
                 'reference_id'     => $referenceId,
                 'type'             => 'PAY',
@@ -306,7 +282,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
                     'cancel_return_url'  => XENDIT_FAILURE_RETURN_URL . '&ref=' . urlencode($referenceId),
                 ],
                 'description' => $description,
-                'metadata'    => ['order_id' => $orderId, 'source' => 'BreadBreak'],
+                'metadata'    => ['order_id' => $orderId, 'source' => 'BreadBreak', 'fulfillment' => $fulfillmentType],
             ];
 
             $xenditResult = xenditRequest('POST', '/v3/payment_requests', $xenditPayload);
@@ -320,7 +296,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
             $xenditBody = $xenditResult['body'];
             $xenditId   = $xenditBody['payment_request_id'] ?? ($xenditBody['id'] ?? '');
 
-            // 7. Create payments row
             $pdo->prepare(
                 "INSERT INTO payments
                     (order_id, xendit_payment_request_id, reference_id, amount, currency,
@@ -336,11 +311,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
 
             $pdo->commit();
 
-            // 8. Clear cart
             $_SESSION['cart'] = [];
             $pdo->prepare('DELETE FROM customer_cart WHERE user_id = :uid')->execute(['uid' => $customerId]);
 
-            // 9. Redirect customer to Xendit GCash payment page
             $paymentUrl = '';
             foreach ($xenditBody['actions'] ?? [] as $action) {
                 $url = $action['value'] ?? $action['url'] ?? '';
@@ -362,7 +335,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
     }
 }
 
-// Generate / refresh CSRF token
 if (empty($_SESSION['checkout_csrf'])) {
     $_SESSION['checkout_csrf'] = bin2hex(random_bytes(24));
 }
@@ -390,7 +362,7 @@ $pageTitle = 'Checkout | BreadBreak';
     <div class="section-heading" style="margin-bottom:2rem;">
         <span class="eyebrow">Step 2 of 2</span>
         <h1>Checkout</h1>
-        <p>Review your order, select delivery address, and confirm payment via GCash.</p>
+        <p>Review your order, choose delivery or store pickup, and confirm payment via GCash.</p>
     </div>
 
     <?php if ($checkoutError): ?>
@@ -402,8 +374,26 @@ $pageTitle = 'Checkout | BreadBreak';
 
     <div class="checkout-layout">
 
-        <!-- ── Left Column: Order Items, Address, Discount ── -->
+        <!-- ── Left Column: Items, Fulfillment Choice, Senior/PWD ── -->
         <div>
+            <!-- ── Fulfillment Choice Card (Delivery vs Pickup) ── -->
+            <div class="fulfillment-selector-card">
+                <div style="display:flex;align-items:center;justify-content:space-between;">
+                    <h2 style="font-size:1.15rem;margin:0;color:var(--brown-900);">
+                        <i class="fa-solid fa-box-open" style="margin-right:.5rem;color:var(--accent)"></i>Fulfillment Option
+                    </h2>
+                    <span style="font-size:.8rem;color:var(--muted);">Select how you want to receive your order</span>
+                </div>
+                <div class="fulfillment-toggle-group" role="tablist">
+                    <button type="button" class="fulfillment-toggle-btn is-active" id="toggle-delivery-btn" data-mode="delivery">
+                        <i class="fa-solid fa-truck"></i> Delivery
+                    </button>
+                    <button type="button" class="fulfillment-toggle-btn" id="toggle-pickup-btn" data-mode="pickup">
+                        <i class="fa-solid fa-store"></i> Store Pickup (Free)
+                    </button>
+                </div>
+            </div>
+
             <!-- Order Items Card -->
             <div class="checkout-card" style="margin-bottom:1.5rem;">
                 <div class="checkout-card-header">
@@ -446,15 +436,14 @@ $pageTitle = 'Checkout | BreadBreak';
                 </div>
             </div>
 
-            <!-- Delivery Address Card -->
-            <div class="checkout-card" style="margin-bottom:1.5rem;">
+            <!-- ── Delivery Address Section (Hidden when Pickup selected) ── -->
+            <div class="checkout-card" id="delivery-address-card" style="margin-bottom:1.5rem;">
                 <div class="checkout-card-header">
                     <h2><i class="fa-solid fa-location-dot" style="margin-right:.5rem;color:var(--accent)"></i>Delivery Address</h2>
                 </div>
                 <div class="checkout-card-body">
 
                 <?php
-                // Load customer's saved addresses
                 $savedAddressStmt = $pdo->prepare(
                     'SELECT id, label, full_address, barangay, city, province, postal_code, is_default
                      FROM customer_addresses WHERE customer_id = :cid ORDER BY is_default DESC, created_at ASC'
@@ -524,7 +513,7 @@ $pageTitle = 'Checkout | BreadBreak';
                 <?php else: ?>
                     <p style="font-size:.88rem;color:var(--muted);margin:0 0 1rem;">
                         Enter your full delivery address. We deliver within 8km of our branch in Estrella Village, Guiguinto, Bulacan.
-                        <a href="/BreadBreak/customer/account.php" style="color:var(--accent);white-space:nowrap;"><i class="fa-solid fa-location-dot" style="margin-right:.2rem;"></i>Save addresses</a> in My Account for faster checkout.
+                        <a href="/BreadBreak/customer/account.php" style="color:var(--accent);white-space:nowrap;"><i class="fa-solid fa-location-dot" style="margin-right:.2rem;"></i>Save addresses</a> in My Account.
                     </p>
                     <label class="delivery-address-label" for="delivery-address-input">
                         Delivery Address <span style="color:#c00;">*</span>
@@ -543,7 +532,36 @@ $pageTitle = 'Checkout | BreadBreak';
                 </div>
             </div>
 
-            <!-- Senior Citizen / PWD Discount Card -->
+            <!-- ── Store Pickup Info Card (Shown when Pickup selected) ── -->
+            <div class="checkout-card" id="store-pickup-card" style="display:none;margin-bottom:1.5rem;">
+                <div class="checkout-card-header" style="display:flex;align-items:center;justify-content:space-between;">
+                    <h2><i class="fa-solid fa-store" style="margin-right:.5rem;color:var(--accent)"></i>Store Pickup Details</h2>
+                    <span class="pickup-free-badge"><i class="fa-solid fa-check"></i> Free Pickup</span>
+                </div>
+                <div class="checkout-card-body">
+                    <div class="pickup-branch-header">
+                        <div>
+                            <h3 class="pickup-branch-title"><i class="fa-solid fa-location-dot"></i> BreadBreak — Estrella Village Branch</h3>
+                            <p class="pickup-branch-address">Estrella Village, Guiguinto, Bulacan, Philippines</p>
+                            <div style="margin-top:.5rem;font-size:.85rem;color:var(--muted);">
+                                <div><i class="fa-solid fa-clock" style="margin-right:.4rem;color:var(--accent)"></i><strong>Operating Hours:</strong> 7:00 AM – 8:00 PM (Monday – Sunday)</div>
+                                <div style="margin-top:.2rem;"><i class="fa-solid fa-bell-concierge" style="margin-right:.4rem;color:var(--accent)"></i><strong>Preparation Time:</strong> Ready in 30–45 mins after payment</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- BreadBreak Location Image Preview -->
+                    <div class="pickup-map-container">
+                        <img src="/BreadBreak/assets/breadbreak_png/breadbreak_location.png" alt="BreadBreak Bakery Location Map" class="pickup-map-img" />
+                        <div class="pickup-map-caption">
+                            <span><i class="fa-solid fa-map-pin" style="margin-right:.3rem;color:var(--accent)"></i>Estrella Village, Guiguinto, Bulacan</span>
+                            <span style="font-weight:600;color:var(--brown-900);">BreadBreak Main Bakery</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Senior Citizen / PWD Discount Card with Checker ── -->
             <div class="checkout-card">
                 <div class="checkout-card-header" style="display:flex;align-items:center;justify-content:space-between;">
                     <h2><i class="fa-solid fa-id-card" style="margin-right:.5rem;color:var(--accent)"></i>Senior Citizen / PWD Discount</h2>
@@ -561,28 +579,35 @@ $pageTitle = 'Checkout | BreadBreak';
                         <div style="display:flex;gap:1.5rem;margin-bottom:1rem;flex-wrap:wrap;">
                             <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.88rem;font-weight:600;color:var(--brown-800);">
                                 <input type="radio" name="discount_type_radio" value="senior" checked style="accent-color:var(--accent);" />
-                                <span><i class="fa-solid fa-person-cane" style="margin-right:.25rem;color:var(--accent);"></i>Senior Citizen</span>
+                                <span><i class="fa-solid fa-person-cane" style="margin-right:.25rem;color:var(--accent);"></i>Senior Citizen (OSCA ID)</span>
                             </label>
                             <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.88rem;font-weight:600;color:var(--brown-800);">
                                 <input type="radio" name="discount_type_radio" value="pwd" style="accent-color:var(--accent);" />
-                                <span><i class="fa-solid fa-wheelchair" style="margin-right:.25rem;color:var(--accent);"></i>Person with Disability (PWD)</span>
+                                <span><i class="fa-solid fa-wheelchair" style="margin-right:.25rem;color:var(--accent);"></i>Person with Disability (PWD ID)</span>
                             </label>
                         </div>
 
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:.9rem;">
-                            <label style="display:flex;flex-direction:column;gap:.35rem;font-size:.85rem;font-weight:600;color:var(--brown-800);">
-                                ID Number <span style="color:#c00;">*</span>
-                                <input type="text" id="discount-id-input" placeholder="e.g. SC-123456 / PWD-7890" style="border:1.5px solid var(--border);border-radius:8px;padding:.55rem .8rem;font-family:inherit;font-size:.9rem;" />
-                            </label>
-                            <label style="display:flex;flex-direction:column;gap:.35rem;font-size:.85rem;font-weight:600;color:var(--brown-800);">
-                                Cardholder Full Name <span style="color:#c00;">*</span>
-                                <input type="text" id="discount-name-input" placeholder="Name as printed on ID" style="border:1.5px solid var(--border);border-radius:8px;padding:.55rem .8rem;font-family:inherit;font-size:.9rem;" />
-                            </label>
+                            <div>
+                                <label style="display:flex;flex-direction:column;gap:.35rem;font-size:.85rem;font-weight:600;color:var(--brown-800);">
+                                    ID Number <span style="color:#c00;">*</span>
+                                    <input type="text" id="discount-id-input" placeholder="e.g. SC-123456 or PWD-2026-89" maxlength="30" style="border:1.5px solid var(--border);border-radius:8px;padding:.55rem .8rem;font-family:inherit;font-size:.9rem;" />
+                                </label>
+                                <span class="input-feedback-msg" id="id-feedback"></span>
+                            </div>
+
+                            <div>
+                                <label style="display:flex;flex-direction:column;gap:.35rem;font-size:.85rem;font-weight:600;color:var(--brown-800);">
+                                    Cardholder Full Name <span style="color:#c00;">*</span>
+                                    <input type="text" id="discount-name-input" placeholder="e.g. Juan Dela Cruz" maxlength="70" style="border:1.5px solid var(--border);border-radius:8px;padding:.55rem .8rem;font-family:inherit;font-size:.9rem;" />
+                                </label>
+                                <span class="input-feedback-msg" id="name-feedback"></span>
+                            </div>
                         </div>
 
-                        <div class="checkout-alert alert-info" style="margin-top:.9rem;margin-bottom:0;font-size:.82rem;padding:.65rem .9rem;">
+                        <div class="checkout-alert alert-info" style="margin-top:.7rem;margin-bottom:0;font-size:.82rem;padding:.65rem .9rem;">
                             <i class="fa-solid fa-circle-info"></i>
-                            <span><strong>Verification Policy:</strong> Please present your physical Senior Citizen or PWD ID to our delivery rider upon handover to validate the discount.</span>
+                            <span><strong>Verification Policy:</strong> Please present the physical Senior Citizen / PWD ID upon receiving the order for verification.</span>
                         </div>
                     </div>
                 </div>
@@ -632,9 +657,9 @@ $pageTitle = 'Checkout | BreadBreak';
                     <span id="summary-vat-amount">₱<?php echo number_format($cartTotal - ($cartTotal / 1.12), 2); ?></span>
                 </div>
 
-                <!-- Delivery Fee Row -->
+                <!-- Fulfillment / Delivery Fee Row -->
                 <div class="summary-row" id="summary-delivery-row">
-                    <span><i class="fa-solid fa-truck" style="margin-right:.3rem;font-size:.85em;"></i>Delivery Fee</span>
+                    <span id="summary-delivery-label"><i class="fa-solid fa-truck" style="margin-right:.3rem;font-size:.85em;"></i>Delivery Fee</span>
                     <span id="summary-delivery-fee" style="color:var(--muted);">—</span>
                 </div>
 
@@ -654,7 +679,8 @@ $pageTitle = 'Checkout | BreadBreak';
                     <input type="hidden" name="action" value="confirm_order" />
                     <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['checkout_csrf']); ?>" />
                     
-                    <!-- Hidden delivery fields -->
+                    <!-- Hidden fulfillment fields -->
+                    <input type="hidden" name="fulfillment_type" id="hidden-fulfillment-type" value="delivery" />
                     <input type="hidden" name="delivery_address" id="hidden-delivery-address" value="" />
                     <input type="hidden" name="delivery_fee" id="hidden-delivery-fee" value="0" />
 
@@ -691,17 +717,29 @@ $pageTitle = 'Checkout | BreadBreak';
     // ── DOM refs ──────────────────────────────────────────────────────────────
     const placeOrderBtn   = document.getElementById('place-order-btn');
     const placeOrderHint  = document.getElementById('place-order-hint');
+    const hiddenFulfill   = document.getElementById('hidden-fulfillment-type');
     const hiddenAddr      = document.getElementById('hidden-delivery-address');
     const hiddenFee       = document.getElementById('hidden-delivery-fee');
     const feeDisplay      = document.getElementById('summary-delivery-fee');
+    const feeLabel        = document.getElementById('summary-delivery-label');
     const grandTotalEl    = document.getElementById('summary-grand-total');
     const cartSubtotal    = <?php echo json_encode($cartTotal); ?>;
+
+    // Fulfillment toggle elements
+    const toggleDeliveryBtn = document.getElementById('toggle-delivery-btn');
+    const togglePickupBtn   = document.getElementById('toggle-pickup-btn');
+    const deliveryCard      = document.getElementById('delivery-address-card');
+    const pickupCard        = document.getElementById('store-pickup-card');
+    let currentFulfillment  = 'delivery';
 
     // VAT & Discount elements
     const applyDiscountCb = document.getElementById('apply-discount-checkbox');
     const discountWrap    = document.getElementById('discount-fields-wrap');
     const discountIdInput = document.getElementById('discount-id-input');
     const discountNameInput= document.getElementById('discount-name-input');
+    const idFeedback      = document.getElementById('id-feedback');
+    const nameFeedback    = document.getElementById('name-feedback');
+
     const hiddenApplyDisc = document.getElementById('hidden-apply-discount');
     const hiddenDiscType  = document.getElementById('hidden-discount-type');
     const hiddenDiscId    = document.getElementById('hidden-discount-id-number');
@@ -742,10 +780,6 @@ $pageTitle = 'Checkout | BreadBreak';
         let netItemsTotal = cartSubtotal;
 
         if (isSeniorOrPwd) {
-            // Philippine Standard:
-            // 1. VAT Exempt base = cartSubtotal / 1.12
-            // 2. 12% VAT removed = cartSubtotal - (cartSubtotal / 1.12)
-            // 3. 20% discount on VAT Exempt base = (cartSubtotal / 1.12) * 0.20
             const vatExemptBase = cartSubtotal / 1.12;
             const vatExemptAmount = cartSubtotal - vatExemptBase;
             const discountAmount = vatExemptBase * 0.20;
@@ -771,22 +805,29 @@ $pageTitle = 'Checkout | BreadBreak';
             vatAmtEl.textContent         = formatPHP(vatAmount);
         }
 
-        const fee = currentDeliveryFee !== null ? currentDeliveryFee : 0;
+        const fee = currentFulfillment === 'pickup' ? 0 : (currentDeliveryFee !== null ? currentDeliveryFee : 0);
         const totalToPay = netItemsTotal + fee;
         grandTotalEl.textContent = formatPHP(totalToPay);
     }
 
     function updateSummaryFee(fee) {
         currentDeliveryFee = fee;
-        if (fee === null) {
-            feeDisplay.textContent = '—';
-            feeDisplay.style.color = 'var(--muted)';
-        } else if (fee === 0) {
+        if (currentFulfillment === 'pickup') {
+            feeLabel.innerHTML = '<i class="fa-solid fa-store" style="margin-right:.3rem;font-size:.85em;"></i>Store Pickup';
             feeDisplay.textContent = 'Free';
             feeDisplay.style.color = '#1a6645';
         } else {
-            feeDisplay.textContent = formatPHP(fee);
-            feeDisplay.style.color = 'var(--text)';
+            feeLabel.innerHTML = '<i class="fa-solid fa-truck" style="margin-right:.3rem;font-size:.85em;"></i>Delivery Fee';
+            if (fee === null) {
+                feeDisplay.textContent = '—';
+                feeDisplay.style.color = 'var(--muted)';
+            } else if (fee === 0) {
+                feeDisplay.textContent = 'Free';
+                feeDisplay.style.color = '#1a6645';
+            } else {
+                feeDisplay.textContent = formatPHP(fee);
+                feeDisplay.style.color = 'var(--text)';
+            }
         }
         recalculateTotal();
     }
@@ -806,42 +847,81 @@ $pageTitle = 'Checkout | BreadBreak';
         box.innerHTML = '<i class="fa-solid ' + (icons[type] || 'fa-info') + '"></i><span>' + message + '</span>';
     }
 
+    // ── Smart ID & Name Checker ───────────────────────────────────────────────
+    function validateIdField(val) {
+        const clean = val.trim();
+        if (!clean) return { valid: false, msg: 'ID number is required.' };
+        if (clean.length < 4) return { valid: false, msg: 'ID number is too short (minimum 4 characters).' };
+        if (clean.length > 30) return { valid: false, msg: 'ID number is too long (maximum 30 characters).' };
+        // Check repeated character (e.g. 111111, aaaaa)
+        if (/^(.)\1+$/.test(clean)) return { valid: false, msg: 'Please enter a genuine ID number, not repeated characters.' };
+        // Valid characters: letters, digits, hyphens, slashes, spaces
+        if (!/^[A-Za-z0-9][A-Za-z0-9\-\s\/]{2,28}[A-Za-z0-9]$/.test(clean)) {
+            return { valid: false, msg: 'ID can only contain letters, numbers, hyphens, and slashes.' };
+        }
+        return { valid: true, msg: 'Valid ID format.' };
+    }
+
+    function validateNameField(val) {
+        const clean = val.trim();
+        if (!clean) return { valid: false, msg: 'Cardholder name is required.' };
+        if (clean.length < 4) return { valid: false, msg: 'Name is too short (minimum 4 characters).' };
+        if (clean.length > 70) return { valid: false, msg: 'Name is too long.' };
+        // Valid characters: letters and spaces/dots/hyphens
+        if (!/^[A-Za-zÀ-ÿ\s\.\-]{4,70}$/.test(clean)) {
+            return { valid: false, msg: 'Name should only contain letters and spaces.' };
+        }
+        // At least one space (first and last name) or at least 4 letters
+        if (clean.indexOf(' ') === -1 && clean.length < 5) {
+            return { valid: false, msg: 'Please enter first and last name.' };
+        }
+        return { valid: true, msg: 'Valid name format.' };
+    }
+
     // ── Master Validation & Button State ──────────────────────────────────────
     function updateOrderButtonState() {
-        // 1. Check address
-        if (!hiddenAddr.value || hiddenAddr.value.trim() === '') {
-            setOrderButton(false, 'Please select or enter a delivery address.');
-            return false;
+        // 1. Check fulfillment and address
+        if (currentFulfillment === 'pickup') {
+            hiddenAddr.value = 'BreadBreak Bakery - Estrella Village, Guiguinto, Bulacan (Store Pickup)';
+            hiddenFee.value  = 0;
+        } else {
+            if (!hiddenAddr.value || hiddenAddr.value.trim() === '') {
+                setOrderButton(false, 'Please select or enter a delivery address.');
+                return false;
+            }
+            if (savedAddrList && !usingOtherAddr) {
+                const checked = [...radios].find(r => r.checked);
+                if (!checked) {
+                    setOrderButton(false, 'Select a delivery address to continue.');
+                    return false;
+                }
+                if (checked.dataset.zoneAllowed === '0') {
+                    setOrderButton(false, 'This address is outside our delivery zone.');
+                    return false;
+                }
+                if (checked.dataset.zoneAllowed === undefined) {
+                    setOrderButton(false, 'Checking delivery zone…');
+                    return false;
+                }
+                const minOrder = parseFloat(checked.dataset.zoneMinOrder ?? 0);
+                if (minOrder > 0 && cartSubtotal < minOrder) {
+                    setOrderButton(false, 'Minimum order of ₱' + minOrder.toLocaleString() + ' required for this zone.');
+                    return false;
+                }
+            }
         }
 
-        // 2. Check saved address zone status if using radio
-        if (savedAddrList && !usingOtherAddr) {
-            const checked = [...radios].find(r => r.checked);
-            if (!checked) {
-                setOrderButton(false, 'Select a delivery address to continue.');
-                return false;
-            }
-            if (checked.dataset.zoneAllowed === '0') {
-                setOrderButton(false, 'This address is outside our delivery zone.');
-                return false;
-            }
-            if (checked.dataset.zoneAllowed === undefined) {
-                setOrderButton(false, 'Checking delivery zone…');
-                return false;
-            }
-            const minOrder = parseFloat(checked.dataset.zoneMinOrder ?? 0);
-            if (minOrder > 0 && cartSubtotal < minOrder) {
-                setOrderButton(false, 'Minimum order of ₱' + minOrder.toLocaleString() + ' required for this zone.');
-                return false;
-            }
-        }
-
-        // 3. Check discount if checked
+        // 2. Check discount if checked
         if (applyDiscountCb && applyDiscountCb.checked) {
-            const idVal   = discountIdInput ? discountIdInput.value.trim() : '';
-            const nameVal = discountNameInput ? discountNameInput.value.trim() : '';
-            if (!idVal || !nameVal) {
-                setOrderButton(false, 'Please provide Senior/PWD ID Number and Cardholder Name.');
+            const idRes   = validateIdField(discountIdInput ? discountIdInput.value : '');
+            const nameRes = validateNameField(discountNameInput ? discountNameInput.value : '');
+
+            if (!idRes.valid) {
+                setOrderButton(false, idRes.msg);
+                return false;
+            }
+            if (!nameRes.valid) {
+                setOrderButton(false, nameRes.msg);
                 return false;
             }
         }
@@ -851,9 +931,39 @@ $pageTitle = 'Checkout | BreadBreak';
         return true;
     }
 
-    // ── Discount Toggle Listeners ──────────────────────────────────────────────
+    // ── Fulfillment Mode Toggle ───────────────────────────────────────────────
+    function setFulfillmentMode(mode) {
+        currentFulfillment = mode;
+        hiddenFulfill.value = mode;
+
+        if (mode === 'pickup') {
+            togglePickupBtn.classList.add('is-active');
+            toggleDeliveryBtn.classList.remove('is-active');
+            deliveryCard.style.display = 'none';
+            pickupCard.style.display   = 'block';
+            updateSummaryFee(0);
+        } else {
+            toggleDeliveryBtn.classList.add('is-active');
+            togglePickupBtn.classList.remove('is-active');
+            deliveryCard.style.display = 'block';
+            pickupCard.style.display   = 'none';
+            // Re-apply delivery address selection
+            if (savedAddrList && !usingOtherAddr) {
+                applySelectedRadio();
+            } else if (addrTextarea && addrTextarea.value.trim().length >= 5) {
+                runFreeTextCheck(addrTextarea.value.trim());
+            } else {
+                updateSummaryFee(null);
+            }
+        }
+        updateOrderButtonState();
+    }
+
+    toggleDeliveryBtn.addEventListener('click', () => setFulfillmentMode('delivery'));
+    togglePickupBtn.addEventListener('click', () => setFulfillmentMode('pickup'));
+
+    // ── Discount Toggle & Live Checkers ────────────────────────────────────────
     if (applyDiscountCb) {
-        // Ensure UI state matches checkbox on load
         if (discountWrap) discountWrap.style.display = applyDiscountCb.checked ? 'block' : 'none';
 
         applyDiscountCb.addEventListener('change', function () {
@@ -868,9 +978,16 @@ $pageTitle = 'Checkout | BreadBreak';
                 if (hiddenDiscId) hiddenDiscId.value   = discountIdInput.value.trim();
                 if (hiddenDiscName) hiddenDiscName.value = discountNameInput.value.trim();
                 if (discountIdInput.value.trim() === '') discountIdInput.focus();
+                // Run immediate validation feedback
+                checkIdInput();
+                checkNameInput();
             } else {
                 if (hiddenDiscId) hiddenDiscId.value   = '';
                 if (hiddenDiscName) hiddenDiscName.value = '';
+                if (idFeedback) { idFeedback.textContent = ''; idFeedback.className = 'input-feedback-msg'; }
+                if (nameFeedback) { nameFeedback.textContent = ''; nameFeedback.className = 'input-feedback-msg'; }
+                if (discountIdInput) discountIdInput.className = '';
+                if (discountNameInput) discountNameInput.className = '';
             }
 
             recalculateTotal();
@@ -883,18 +1000,44 @@ $pageTitle = 'Checkout | BreadBreak';
             });
         });
 
+        function checkIdInput() {
+            if (!applyDiscountCb.checked) return;
+            const res = validateIdField(discountIdInput.value);
+            if (hiddenDiscId) hiddenDiscId.value = discountIdInput.value.trim();
+            if (discountIdInput.value.trim().length > 0) {
+                idFeedback.textContent = res.msg;
+                idFeedback.className = 'input-feedback-msg ' + (res.valid ? 'is-valid' : 'is-error');
+                discountIdInput.className = res.valid ? 'input-has-success' : 'input-has-error';
+            } else {
+                idFeedback.textContent = '';
+                discountIdInput.className = '';
+            }
+            updateOrderButtonState();
+        }
+
+        function checkNameInput() {
+            if (!applyDiscountCb.checked) return;
+            const res = validateNameField(discountNameInput.value);
+            if (hiddenDiscName) hiddenDiscName.value = discountNameInput.value.trim();
+            if (discountNameInput.value.trim().length > 0) {
+                nameFeedback.textContent = res.msg;
+                nameFeedback.className = 'input-feedback-msg ' + (res.valid ? 'is-valid' : 'is-error');
+                discountNameInput.className = res.valid ? 'input-has-success' : 'input-has-error';
+            } else {
+                nameFeedback.textContent = '';
+                discountNameInput.className = '';
+            }
+            updateOrderButtonState();
+        }
+
         if (discountIdInput) {
-            discountIdInput.addEventListener('input', function () {
-                if (hiddenDiscId) hiddenDiscId.value = this.value.trim();
-                updateOrderButtonState();
-            });
+            discountIdInput.addEventListener('input', checkIdInput);
+            discountIdInput.addEventListener('blur', checkIdInput);
         }
 
         if (discountNameInput) {
-            discountNameInput.addEventListener('input', function () {
-                if (hiddenDiscName) hiddenDiscName.value = this.value.trim();
-                updateOrderButtonState();
-            });
+            discountNameInput.addEventListener('input', checkNameInput);
+            discountNameInput.addEventListener('blur', checkNameInput);
         }
     }
 
@@ -915,6 +1058,47 @@ $pageTitle = 'Checkout | BreadBreak';
     }
 
     // ── SAVED ADDRESS MODE ────────────────────────────────────────────────────
+    function applySelectedRadio() {
+        if (usingOtherAddr || currentFulfillment === 'pickup') return;
+        const checked = [...radios].find(r => r.checked);
+        if (!checked) {
+            hiddenAddr.value = '';
+            updateOrderButtonState();
+            return;
+        }
+
+        addrCards.forEach(c => c.classList.remove('is-checked'));
+        if (checked.closest('[data-address-card]')) checked.closest('[data-address-card]').classList.add('is-checked');
+
+        const allowed  = checked.dataset.zoneAllowed;
+        const fee      = parseFloat(checked.dataset.zoneFee ?? 0);
+        const minOrder = parseFloat(checked.dataset.zoneMinOrder ?? 0);
+
+        if (allowed === undefined) {
+            setOrderButton(false, 'Checking delivery zone…');
+            updateSummaryFee(null);
+            return;
+        }
+        if (allowed === '0') {
+            hiddenFee.value  = 0;
+            hiddenAddr.value = '';
+            updateSummaryFee(null);
+            setOrderButton(false, 'This address is outside our delivery zone.');
+            return;
+        }
+        if (minOrder > 0 && cartSubtotal < minOrder) {
+            hiddenFee.value  = 0;
+            hiddenAddr.value = '';
+            updateSummaryFee(null);
+            setOrderButton(false, 'Minimum order of ₱' + minOrder.toLocaleString() + ' required for this zone.');
+            return;
+        }
+        hiddenAddr.value = checked.value;
+        hiddenFee.value  = fee;
+        updateSummaryFee(fee);
+        updateOrderButtonState();
+    }
+
     if (savedAddrList && radios.length > 0) {
         const addressData = <?php
             $addrJsonList = array_map(fn($a) => [
@@ -954,47 +1138,6 @@ $pageTitle = 'Checkout | BreadBreak';
             });
         });
 
-        function applySelectedRadio() {
-            if (usingOtherAddr) return;
-            const checked = [...radios].find(r => r.checked);
-            if (!checked) {
-                hiddenAddr.value = '';
-                updateOrderButtonState();
-                return;
-            }
-
-            addrCards.forEach(c => c.classList.remove('is-checked'));
-            if (checked.closest('[data-address-card]')) checked.closest('[data-address-card]').classList.add('is-checked');
-
-            const allowed  = checked.dataset.zoneAllowed;
-            const fee      = parseFloat(checked.dataset.zoneFee ?? 0);
-            const minOrder = parseFloat(checked.dataset.zoneMinOrder ?? 0);
-
-            if (allowed === undefined) {
-                setOrderButton(false, 'Checking delivery zone…');
-                updateSummaryFee(null);
-                return;
-            }
-            if (allowed === '0') {
-                hiddenFee.value  = 0;
-                hiddenAddr.value = '';
-                updateSummaryFee(null);
-                setOrderButton(false, 'This address is outside our delivery zone.');
-                return;
-            }
-            if (minOrder > 0 && cartSubtotal < minOrder) {
-                hiddenFee.value  = 0;
-                hiddenAddr.value = '';
-                updateSummaryFee(null);
-                setOrderButton(false, 'Minimum order of ₱' + minOrder.toLocaleString() + ' required for this zone.');
-                return;
-            }
-            hiddenAddr.value = checked.value;
-            hiddenFee.value  = fee;
-            updateSummaryFee(fee);
-            updateOrderButtonState();
-        }
-
         radios.forEach(function (radio) {
             radio.addEventListener('change', function () {
                 usingOtherAddr = false;
@@ -1031,37 +1174,37 @@ $pageTitle = 'Checkout | BreadBreak';
     }
 
     // ── FREE-TEXT MODE ────────────────────────────────────────────────────────
-    if (addrTextarea) {
-        async function runFreeTextCheck(address) {
-            if (address === lastChecked) return;
-            lastChecked = address;
-            if (resultBox) showInlineResult(resultBox, 'loading', 'Checking delivery availability…');
-            setOrderButton(false, 'Checking your address…');
-            updateSummaryFee(null);
+    async function runFreeTextCheck(address) {
+        if (address === lastChecked) return;
+        lastChecked = address;
+        if (resultBox) showInlineResult(resultBox, 'loading', 'Checking delivery availability…');
+        setOrderButton(false, 'Checking your address…');
+        updateSummaryFee(null);
 
-            await checkZone(address, function (data) {
-                if (data.allowed) {
-                    const fee = parseFloat(data.delivery_fee ?? 0);
-                    hiddenAddr.value = address;
-                    hiddenFee.value  = fee;
-                    updateSummaryFee(fee);
-                    if (resultBox) showInlineResult(resultBox, data.drive_warning ? 'warning' : 'allowed', data.message || 'Delivery available.');
-                    if (data.min_order && cartSubtotal < data.min_order) {
-                        if (resultBox) showInlineResult(resultBox, 'blocked', 'Minimum order of ₱' + data.min_order.toLocaleString() + ' required for this zone.');
-                        setOrderButton(false, 'Minimum order not met for your zone.');
-                    } else {
-                        updateOrderButtonState();
-                    }
+        await checkZone(address, function (data) {
+            if (data.allowed) {
+                const fee = parseFloat(data.delivery_fee ?? 0);
+                hiddenAddr.value = address;
+                hiddenFee.value  = fee;
+                updateSummaryFee(fee);
+                if (resultBox) showInlineResult(resultBox, data.drive_warning ? 'warning' : 'allowed', data.message || 'Delivery available.');
+                if (data.min_order && cartSubtotal < data.min_order) {
+                    if (resultBox) showInlineResult(resultBox, 'blocked', 'Minimum order of ₱' + data.min_order.toLocaleString() + ' required for this zone.');
+                    setOrderButton(false, 'Minimum order not met for your zone.');
                 } else {
-                    hiddenAddr.value = '';
-                    hiddenFee.value  = 0;
-                    updateSummaryFee(null);
-                    if (resultBox) showInlineResult(resultBox, 'blocked', data.message || "Sorry, we don't deliver to your area yet.");
-                    setOrderButton(false, 'Delivery not available to this address.');
+                    updateOrderButtonState();
                 }
-            });
-        }
+            } else {
+                hiddenAddr.value = '';
+                hiddenFee.value  = 0;
+                updateSummaryFee(null);
+                if (resultBox) showInlineResult(resultBox, 'blocked', data.message || "Sorry, we don't deliver to your area yet.");
+                setOrderButton(false, 'Delivery not available to this address.');
+            }
+        });
+    }
 
+    if (addrTextarea) {
         addrTextarea.addEventListener('input', function () {
             const val = this.value.trim();
             clearTimeout(checkTimer);

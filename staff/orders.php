@@ -33,7 +33,7 @@ $search = trim($_GET['search'] ?? '');
 $statusFilter = trim($_GET['status'] ?? 'all');
 
 $query = "SELECT o.id, o.reference_id, o.status AS order_status, o.created_at,
-                 o.delivery_fee, o.delivery_address, o.discount_type, o.discount_amount, o.discount_id_number, o.discount_name,
+                 o.fulfillment_type, o.delivery_fee, o.delivery_address, o.discount_type, o.discount_amount, o.discount_id_number, o.discount_name,
                  u.first_name, u.last_name, u.email, u.phone,
                  p.amount, p.payment_method, p.payment_channel, p.status AS payment_status
           FROM orders o
@@ -220,9 +220,13 @@ require __DIR__ . '/../includes/staff_header.php';
                         <td class="customer-info-cell">
                             <strong><i class="fa-solid fa-user" style="font-size: 11px; margin-right: 4px; color: var(--admin-muted);"></i><?php echo htmlspecialchars($o['first_name'] . ' ' . $o['last_name']); ?></strong>
                             <small><i class="fa-solid fa-phone" style="font-size: 9px; margin-right: 3px;"></i><?php echo htmlspecialchars($o['phone']); ?></small>
-                            <?php if (!empty($o['delivery_address'])): ?>
+                            <?php if (($o['fulfillment_type'] ?? 'delivery') === 'pickup'): ?>
+                                <span style="display: inline-block; background: #e8f7ef; color: #1a6645; border: 1px solid #a3d9bc; padding: 2px 6px; border-radius: 6px; font-size: 10px; font-weight: 700; margin-top: 3px;">
+                                    <i class="fa-solid fa-store"></i> Store Pickup
+                                </span>
+                            <?php elseif (!empty($o['delivery_address'])): ?>
                                 <small style="color: #7b523b; display: block; margin-top: 3px; max-width: 180px; line-height: 1.3;" title="<?php echo htmlspecialchars($o['delivery_address']); ?>">
-                                    <i class="fa-solid fa-location-dot" style="font-size: 9px; margin-right: 2px; color: var(--admin-brown);"></i><?php echo htmlspecialchars(mb_strimwidth($o['delivery_address'], 0, 45, '...')); ?>
+                                    <i class="fa-solid fa-truck" style="font-size: 9px; margin-right: 2px; color: var(--admin-brown);"></i><?php echo htmlspecialchars(mb_strimwidth($o['delivery_address'], 0, 45, '...')); ?>
                                 </small>
                             <?php endif; ?>
                         </td>
