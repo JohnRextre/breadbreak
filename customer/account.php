@@ -188,6 +188,10 @@ $accountSections = [
 
 require __DIR__ . '/../includes/header.php';
 ?>
+<!-- Leaflet.js (100% Free OpenStreetMap Interactive Map) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
 <main class="customer-account-page">
     <section class="customer-account-hero"><div class="container"><a class="account-back-link" href="/BreadBreak/customer/menu_dashboard.php"><i class="fa-solid fa-arrow-left"></i> Back to Menu</a><span class="eyebrow">Account Settings</span><h1>My Account</h1><p>Manage your BreadBreak account details and security.</p></div></section>
     <section class="section customer-account-content"><div class="container customer-account-layout">
@@ -266,6 +270,29 @@ require __DIR__ . '/../includes/header.php';
                     <div class="address-add-form" id="addr-add-form" style="display:none;">
                         <form method="POST" class="account-form" style="margin-top:0;">
                             <input type="hidden" name="action" value="add_address" />
+
+                            <!-- Interactive Map Location Picker (100% Free Leaflet + OpenStreetMap) -->
+                            <div class="map-picker-card" style="margin-bottom:1.1rem;border:1.5px solid var(--border,#ded6d0);border-radius:14px;overflow:hidden;background:#fff;">
+                                <div style="padding:.75rem 1rem;background:#fdfbf8;border-bottom:1px solid var(--border,#ded6d0);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;">
+                                    <div>
+                                        <strong style="font-size:.88rem;color:var(--brown-900);display:flex;align-items:center;gap:.4rem;">
+                                            <i class="fa-solid fa-map-location-dot" style="color:var(--accent);"></i> Pin Your Location on Map
+                                        </strong>
+                                        <p style="margin:.15rem 0 0;font-size:.76rem;color:var(--muted);">Click on the map or drag the pin to auto-fill your address. Green circle is our 8km delivery zone.</p>
+                                    </div>
+                                    <button type="button" id="btn-locate-me" class="addr-btn addr-btn-default" style="font-size:.78rem;padding:.35rem .75rem;">
+                                        <i class="fa-solid fa-crosshairs"></i> Use My GPS Location
+                                    </button>
+                                </div>
+                                <div id="address-map" style="width:100%;height:260px;background:#e5e3df;position:relative;z-index:1;"></div>
+                                <div style="padding:.55rem 1rem;background:#fff;border-top:1px solid var(--border,#ded6d0);font-size:.82rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;">
+                                    <span id="map-zone-status" style="font-weight:600;color:var(--muted);">
+                                        <i class="fa-solid fa-circle-info" style="margin-right:.3rem;"></i>Click anywhere on map to set your pin
+                                    </span>
+                                    <span id="map-distance-km" style="font-weight:700;color:var(--brown-900);"></span>
+                                </div>
+                            </div>
+
                             <div class="account-form-grid" style="grid-template-columns:1fr 1fr;gap:.9rem;">
                                 <label style="grid-column:1/-1;">
                                     Label <span style="font-size:.78rem;font-weight:400;color:var(--muted);">(e.g. Home, Work, Parents)</span>
@@ -365,16 +392,221 @@ document.addEventListener('DOMContentLoaded', function () {
     document.querySelectorAll('[data-close-profile-crop]').forEach(function (button) { button.addEventListener('click', function () { closeCropModal(true); }); }); cropBackdrop.addEventListener('click', function () { closeCropModal(true); });
     document.querySelector('[data-save-profile-crop]').addEventListener('click', function () { const canvas = document.createElement('canvas'); canvas.width = 500; canvas.height = 500; const context = canvas.getContext('2d'); const ratio = 500 / 260; context.fillStyle = '#f5f0eb'; context.fillRect(0, 0, 500, 500); context.translate(250 + cropX * ratio, 250 + cropY * ratio); context.scale(cropScale * ratio, cropScale * ratio); context.drawImage(cropImage, -cropImage.naturalWidth / 2, -cropImage.naturalHeight / 2); canvas.toBlob(function (blob) { const croppedFile = new File([blob], 'profile-photo.jpg', { type: 'image/jpeg' }); const transfer = new DataTransfer(); transfer.items.add(croppedFile); photoInput.files = transfer.files; profilePreview.innerHTML = '<img src="' + URL.createObjectURL(blob) + '" alt="Profile photo preview">'; closeCropModal(false); }, 'image/jpeg', .9); });
 
-    // ── Add address toggle ────────────────────────────────────────────────────
+    // ── Add address toggle & Map Picker ───────────────────────────────────────
     const addToggle  = document.getElementById('addr-add-toggle');
     const addForm    = document.getElementById('addr-add-form');
     const addCancel  = document.getElementById('addr-add-cancel');
+
+    // BreadBreak Store Branch Coordinates (Estrella Village, Guiguinto, Bulacan)
+    const STORE_LAT = 14.830905;
+    const STORE_LNG = 120.869675;
+    let map = null;
+    let customerMarker = null;
+
+    function getHaversineDistanceKm(lat1, lon1, lat2, lon2) {
+        const R = 6371; // Earth's radius in km
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                  Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+    }
+
+    let geocodeTimeout = null;
+    async function reverseGeocode(lat, lng) {
+        const zoneStatus = document.getElementById('map-zone-status');
+        if (zoneStatus) {
+            zoneStatus.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="color:var(--accent);margin-right:.3rem;"></i>Finding address details…';
+        }
+
+        try {
+            const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`, {
+                headers: { 'Accept-Language': 'en' }
+            });
+            if (!resp.ok) throw new Error('Geocoding network error');
+            const data = await resp.json();
+            const addr = data.address || {};
+
+            // Extract Barangay / Village / Suburb
+            const barangay = addr.quarter || addr.suburb || addr.neighbourhood || addr.village || addr.hamlet || '';
+            // Extract City / Municipality / Town
+            const city = addr.city || addr.town || addr.municipality || '';
+            // Extract Province / State
+            const province = addr.province || addr.state || 'Bulacan';
+            // Extract Postal Code
+            const postal = addr.postcode || '';
+
+            // Extract Street / Road / House Number
+            const roadParts = [];
+            if (addr.house_number) roadParts.push(addr.house_number);
+            if (addr.road || addr.pedestrian || addr.footway || addr.building) {
+                roadParts.push(addr.road || addr.pedestrian || addr.footway || addr.building);
+            }
+            const road = roadParts.join(' ');
+
+            // Populate form fields
+            const barInput = addForm.querySelector('input[name="addr_barangay"]');
+            const cityInput = addForm.querySelector('input[name="addr_city"]');
+            const provInput = addForm.querySelector('input[name="addr_province"]');
+            const postInput = addForm.querySelector('input[name="addr_postal"]');
+            const fullTextarea = addForm.querySelector('textarea[name="addr_full"]');
+
+            if (barInput && barangay) barInput.value = barangay;
+            if (cityInput && city) cityInput.value = city;
+            if (provInput && province) provInput.value = province;
+            if (postInput && postal) postInput.value = postal;
+
+            // Construct readable full address string
+            const addressPieces = [];
+            if (road) addressPieces.push(road);
+            if (barangay) addressPieces.push('Brgy. ' + barangay);
+            if (city) addressPieces.push(city);
+            if (province) addressPieces.push(province);
+            if (postal) addressPieces.push(postal);
+
+            if (fullTextarea) {
+                fullTextarea.value = addressPieces.length > 0 ? addressPieces.join(', ') : (data.display_name || '');
+                checkAddrZone(fullTextarea.value.trim());
+            }
+
+            // Restore distance & zone status badge after geocode completes
+            const distKm = getHaversineDistanceKm(STORE_LAT, STORE_LNG, lat, lng);
+            updateDistanceDisplay(distKm);
+        } catch (err) {
+            console.warn('Reverse geocoding error:', err);
+            const distKm = getHaversineDistanceKm(STORE_LAT, STORE_LNG, lat, lng);
+            updateDistanceDisplay(distKm);
+        }
+    }
+
+    function updateDistanceDisplay(distKm) {
+        const distBadge = document.getElementById('map-distance-km');
+        const statusBadge = document.getElementById('map-zone-status');
+
+        if (distBadge) {
+            distBadge.textContent = distKm.toFixed(2) + ' km away';
+        }
+
+        if (statusBadge) {
+            if (distKm <= 8.0) {
+                statusBadge.innerHTML = '<span style="color:#1d7044;font-weight:700;"><i class="fa-solid fa-circle-check" style="color:#28a067;margin-right:.3rem;"></i>Within 8km Delivery Zone (' + distKm.toFixed(1) + ' km)</span>';
+            } else {
+                statusBadge.innerHTML = '<span style="color:#c53030;font-weight:700;"><i class="fa-solid fa-circle-xmark" style="color:#e53e3e;margin-right:.3rem;"></i>Beyond 8km Delivery Zone (' + distKm.toFixed(1) + ' km)</span>';
+            }
+        }
+    }
+
+    function setCustomerPin(lat, lng, doGeocode = true) {
+        if (!map) return;
+
+        if (!customerMarker) {
+            customerMarker = L.marker([lat, lng], {
+                draggable: true,
+                title: 'Your Location (Drag to adjust)'
+            }).addTo(map);
+
+            customerMarker.on('dragend', function (e) {
+                const pos = e.target.getLatLng();
+                setCustomerPin(pos.lat, pos.lng, true);
+            });
+        } else {
+            customerMarker.setLatLng([lat, lng]);
+        }
+
+        const distKm = getHaversineDistanceKm(STORE_LAT, STORE_LNG, lat, lng);
+        updateDistanceDisplay(distKm);
+
+        customerMarker.bindPopup('<b>Your Selected Pin</b><br>' + distKm.toFixed(2) + ' km from BreadBreak').openPopup();
+
+        if (doGeocode) {
+            clearTimeout(geocodeTimeout);
+            geocodeTimeout = setTimeout(() => reverseGeocode(lat, lng), 300);
+        }
+    }
+
+    function initAddressMap() {
+        if (map || !document.getElementById('address-map') || typeof L === 'undefined') return;
+
+        map = L.map('address-map').setView([STORE_LAT, STORE_LNG], 13);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
+            maxZoom: 19
+        }).addTo(map);
+
+        // 8km delivery zone circle
+        L.circle([STORE_LAT, STORE_LNG], {
+            radius: 8000,
+            color: '#28a067',
+            fillColor: '#28a067',
+            fillOpacity: 0.09,
+            weight: 2,
+            dashArray: '5, 5'
+        }).addTo(map);
+
+        // Store marker with bakery icon
+        const storeIcon = L.divIcon({
+            className: 'breadbreak-map-store-icon',
+            html: '<div style="background:#c05c28;color:#fff;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,0.35);border:2px solid #fff;"><i class="fa-solid fa-bread-slice" style="font-size:14px;"></i></div>',
+            iconSize: [32, 32],
+            iconAnchor: [16, 16],
+            popupAnchor: [0, -18]
+        });
+
+        const storeMarker = L.marker([STORE_LAT, STORE_LNG], { icon: storeIcon }).addTo(map);
+        storeMarker.bindPopup('<strong>BreadBreak Bakery</strong><br>Estrella Village, Guiguinto, Bulacan<br><span style="color:#28a067;font-weight:700;">8km delivery hub</span>');
+
+        // Click on map to set pin
+        map.on('click', function (e) {
+            setCustomerPin(e.latlng.lat, e.latlng.lng, true);
+        });
+
+        // Locate me button
+        const locateBtn = document.getElementById('btn-locate-me');
+        if (locateBtn) {
+            locateBtn.addEventListener('click', function () {
+                if (!navigator.geolocation) {
+                    alert('Geolocation is not supported by your browser.');
+                    return;
+                }
+                const originalHtml = locateBtn.innerHTML;
+                locateBtn.disabled = true;
+                locateBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Locating…';
+
+                navigator.geolocation.getCurrentPosition(
+                    function (pos) {
+                        locateBtn.disabled = false;
+                        locateBtn.innerHTML = originalHtml;
+                        const lat = pos.coords.latitude;
+                        const lng = pos.coords.longitude;
+                        map.setView([lat, lng], 15);
+                        setCustomerPin(lat, lng, true);
+                    },
+                    function (err) {
+                        locateBtn.disabled = false;
+                        locateBtn.innerHTML = originalHtml;
+                        alert('Unable to get your GPS location. Please allow location permissions or click directly on the map to set your pin.');
+                    },
+                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                );
+            });
+        }
+    }
+
     if (addToggle && addForm) {
         addToggle.addEventListener('click', function () {
             const open = addForm.style.display === 'none';
             addForm.style.display = open ? 'block' : 'none';
             addToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-            if (open) addForm.querySelector('input[name="addr_label"]')?.focus();
+            if (open) {
+                initAddressMap();
+                setTimeout(function () {
+                    if (map) map.invalidateSize();
+                }, 200);
+                addForm.querySelector('input[name="addr_label"]')?.focus();
+            }
         });
         if (addCancel) {
             addCancel.addEventListener('click', function () {
@@ -389,6 +621,7 @@ document.addEventListener('DOMContentLoaded', function () {
         let zoneTimer = null;
 
         function showAddrZone(type, msg) {
+            if (!zoneResult) return;
             zoneResult.style.display = 'flex';
             zoneResult.className = 'zone-check-result zone-' + type;
             const icons = { loading:'fa-spinner fa-spin', allowed:'fa-circle-check', blocked:'fa-circle-xmark', warning:'fa-triangle-exclamation' };
@@ -396,6 +629,7 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         async function checkAddrZone(val) {
+            if (!zoneResult) return;
             if (val.length < 5) { zoneResult.style.display = 'none'; return; }
             showAddrZone('loading', 'Checking delivery zone…');
             try {
