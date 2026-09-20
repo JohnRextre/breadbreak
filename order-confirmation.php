@@ -18,7 +18,7 @@ if ($ref) {
 
     // Load order (must belong to this customer)
     $oStmt = $pdo->prepare(
-        "SELECT id, reference_id, status, created_at FROM orders
+        "SELECT id, reference_id, status, delivery_fee, delivery_address, created_at FROM orders
          WHERE reference_id = :ref AND customer_id = :cid LIMIT 1"
     );
     $oStmt->execute(['ref' => $ref, 'cid' => $customerId]);
@@ -173,6 +173,13 @@ $pageTitle = 'Order Confirmation | BreadBreak';
 
                 <dt>Total Amount</dt>
                 <dd><strong style="color:var(--accent)">₱<?php echo number_format((float) ($payment['amount'] ?? 0), 2); ?></strong></dd>
+
+                <?php if (!empty($order['delivery_address'])): ?>
+                <dt style="grid-column:1/-1;margin-top:.3rem;border-top:1px solid var(--border);padding-top:.5rem;">
+                    <i class="fa-solid fa-location-dot" style="margin-right:.3rem;color:var(--accent);"></i>Delivery Address
+                </dt>
+                <dd style="grid-column:1/-1;"><?php echo nl2br(htmlspecialchars($order['delivery_address'])); ?></dd>
+                <?php endif; ?>
             </dl>
 
             <!-- Order items table -->
@@ -198,6 +205,14 @@ $pageTitle = 'Order Confirmation | BreadBreak';
                         <td class="text-right price-cell">₱<?php echo number_format((float) $item['line_total'], 2); ?></td>
                     </tr>
                 <?php endforeach; ?>
+                    <?php if ((float)($order['delivery_fee'] ?? 0) > 0): ?>
+                    <tr>
+                        <td colspan="5" class="text-right" style="color:var(--muted);font-size:.9rem;">
+                            <i class="fa-solid fa-truck" style="margin-right:.3rem;"></i>Delivery Fee
+                        </td>
+                        <td class="text-right price-cell">₱<?php echo number_format((float) $order['delivery_fee'], 2); ?></td>
+                    </tr>
+                    <?php endif; ?>
                     <tr>
                         <td colspan="5" class="text-right" style="font-weight:700;color:var(--brown-900);padding-top:1rem;">Total</td>
                         <td class="text-right price-cell" style="font-size:1.1rem;padding-top:1rem;">

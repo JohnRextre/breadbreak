@@ -103,6 +103,8 @@ CREATE TABLE IF NOT EXISTS orders (
     customer_id INT NOT NULL,
     reference_id VARCHAR(32) NOT NULL UNIQUE,
     status ENUM('pending', 'processing', 'completed', 'cancelled') NOT NULL DEFAULT 'pending',
+    delivery_fee DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    delivery_address TEXT NULL,
     notes TEXT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -146,3 +148,51 @@ CREATE TABLE IF NOT EXISTS payments (
     CONSTRAINT fk_payment_order FOREIGN KEY (order_id) REFERENCES orders(id) ON UPDATE CASCADE ON DELETE RESTRICT
 );
 
+-- =============================================================================
+-- Delivery Settings  (admin-configurable key-value store)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS delivery_settings (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    setting_key VARCHAR(100) NOT NULL UNIQUE,
+    setting_value TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Default values (seeded by database/migrate_delivery.php)
+-- delivery_mode        = 'simple' | 'full'
+-- delivery_zones       = JSON array of {name, label, max_km, fee, min_order}
+-- in_range_areas       = JSON array of lowercase barangay/city names (simple mode)
+-- branch_lat/lng       = branch GPS coordinates (full mode)
+-- branch_name          = display name of branch
+-- max_drive_time_min   = drive time threshold for traffic warning
+-- geoapify_api_key     = optional Geoapify key (full mode)
+
+-- =============================================================================
+-- Delivery Geocode Cache  (24-hour TTL, respects Nominatim rate limit)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS delivery_geocode_cache (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    address_hash CHAR(64) NOT NULL UNIQUE,
+    address_raw TEXT NOT NULL,
+    latitude DECIMAL(10,7) NULL,
+    longitude DECIMAL(10,7) NULL,
+    geocode_success TINYINT(1) NOT NULL DEFAULT 0,
+    cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_geocache_hash (address_hash)
+);
+
+-- =============================================================================
+-- Delivery Zone Logs  (analytics per order)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS delivery_zone_logs (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    order_id INT NOT NULL,
+    customer_address TEXT NOT NULL,
+    zone VARCHAR(20) NULL,
+    distance_km DECIMAL(8,3) NULL,
+    drive_time_min DECIMAL(8,1) NULL,
+    delivery_fee_charged DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    mode_used ENUM('simple','full') NOT NULL DEFAULT 'simple',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_zone_logs_order (order_id)
+);

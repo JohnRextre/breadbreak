@@ -452,3 +452,79 @@
     }
 }
 
+/* --------------------------------------------------------------------------
+   Delivery Address Field
+   -------------------------------------------------------------------------- */
+.delivery-address-label {
+    display: block;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--brown-900);
+    margin-bottom: 0.45rem;
+}
+
+.delivery-address-textarea {
+    width: 100%;
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    padding: 0.75rem 1rem;
+    font-family: inherit;
+    font-size: 0.95rem;
+    color: var(--text);
+    background: #fff;
+    resize: vertical;
+    min-height: 80px;
+    transition: border-color 0.15s;
+    box-sizing: border-box;
+}
+
+.delivery-address-textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(184, 92, 0, 0.1);
+}
+
+/* --------------------------------------------------------------------------
+   Zone Check Result Banner
+   -------------------------------------------------------------------------- */
+.zone-check-result {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.7rem 1rem;
+    border-radius: 10px;
+    font-size: 0.88rem;
+    font-weight: 500;
+    margin-top: 0.75rem;
+    line-height: 1.5;
+}
+
+.zone-check-result i {
+    margin-top: 0.1rem;
+    flex-shrink: 0;
+}
+
+.zone-loading {
+    background: #f0f4ff;
+    border: 1px solid #b3c6f5;
+    color: #2052a8;
+}
+
+.zone-allowed {
+    background: #e8f7ef;
+    border: 1px solid #a3d9bc;
+    color: #1a6645;
+}
+
+.zone-blocked {
+    background: #fde8e8;
+    border: 1px solid #f5a3a3;
+    color: #891515;
+}
+
+.zone-warning {
+    background: #fff8e6;
+    border: 1px solid #f5d49a;
+    color: #7a4a00;
+}
+
