@@ -465,11 +465,19 @@ $pageTitle = 'Checkout | BreadBreak';
                     <?php foreach ($savedAddresses as $i => $addr):
                         $addrText = $addr['full_address'];
                         $addrMeta = implode(', ', array_filter([$addr['barangay'], $addr['city'], $addr['province']]));
+                        $fullSearchString = $addrText . ($addrMeta ? ', ' . $addrMeta : '');
+                        $initCheck = serverCheckDelivery($fullSearchString, $deliveryMode, $inRangeAreas, $deliveryZones);
+                        $isAllowed = !empty($initCheck['allowed']);
+                        $zoneFee = $isAllowed ? 50 : 0;
                     ?>
                         <label class="saved-address-card<?php echo $addr['is_default'] ? ' is-checked' : ''; ?>" data-address-card>
                             <input type="radio" name="saved_address_radio"
-                                value="<?php echo htmlspecialchars($addrText . ($addrMeta ? ', ' . $addrMeta : '')); ?>"
+                                value="<?php echo htmlspecialchars($fullSearchString); ?>"
                                 data-address-radio
+                                data-address-id="<?php echo (int) $addr['id']; ?>"
+                                data-zone-allowed="<?php echo $isAllowed ? '1' : '0'; ?>"
+                                data-zone-fee="<?php echo $zoneFee; ?>"
+                                data-zone-min-order="0"
                                 <?php echo $addr['is_default'] ? 'checked' : ''; ?> />
                             <div class="saved-address-card-body">
                                 <div class="saved-address-card-label">
@@ -484,7 +492,15 @@ $pageTitle = 'Checkout | BreadBreak';
                                     <div class="saved-address-card-meta"><?php echo htmlspecialchars($addrMeta); ?></div>
                                 <?php endif; ?>
                                 <div class="saved-address-zone-status" id="zone-status-<?php echo $addr['id']; ?>">
-                                    <span class="zone-checking"><i class="fa-solid fa-spinner fa-spin"></i> Checking zone…</span>
+                                    <?php if ($isAllowed): ?>
+                                        <span style="color:#1a6645;font-size:.82rem;font-weight:600;"><i class="fa-solid fa-circle-check" style="margin-right:.3rem;"></i>Delivery available · ₱50.00 delivery fee</span>
+                                    <?php else: ?>
+                                        <div style="color:#891515;font-size:.82rem;margin-top:.4rem;background:#fff5f5;border:1px solid #fecaca;border-radius:10px;padding:.6rem .85rem;">
+                                            <div style="font-weight:700;display:flex;align-items:center;gap:.35rem;"><i class="fa-solid fa-circle-xmark" style="color:#e53e3e;"></i> Outside 8km Delivery Zone</div>
+                                            <div style="margin-top:.25rem;font-size:.78rem;color:#742a2a;line-height:1.4;">Delivery is unavailable for this address, but you can choose <strong>Store Pickup (Free)</strong>!</div>
+                                            <button type="button" class="addr-btn addr-btn-default switch-to-pickup-btn" style="margin-top:.45rem;font-size:.78rem;padding:.3rem .75rem;background:#fff;border:1.5px solid var(--accent);color:var(--accent);font-weight:700;cursor:pointer;border-radius:6px;display:inline-flex;align-items:center;gap:.35rem;"><i class="fa-solid fa-store"></i> Switch to Store Pickup (Free)</button>
+                                        </div>
+                                    <?php endif; ?>
                                 </div>
                             </div>
                         </label>
@@ -1150,17 +1166,14 @@ $pageTitle = 'Checkout | BreadBreak';
                             '<button type="button" class="addr-btn addr-btn-default switch-to-pickup-btn" style="margin-top:.45rem;font-size:.78rem;padding:.3rem .75rem;background:#fff;border:1.5px solid var(--accent);color:var(--accent);font-weight:700;cursor:pointer;border-radius:6px;display:inline-flex;align-items:center;gap:.35rem;"><i class="fa-solid fa-store"></i> Switch to Store Pickup (Free)</button>' +
                         '</div>';
                     }
-                    const radio = savedAddrList.querySelector('[data-address-radio][value="' + CSS.escape(addr.text) + '"]') ||
-                                  [...radios].find(r => r.value === addr.text);
+                    const radio = savedAddrList.querySelector('[data-address-id="' + addr.id + '"]');
                     if (radio) {
                         radio.dataset.zoneAllowed = data.allowed ? '1' : '0';
                         radio.dataset.zoneFee     = data.delivery_fee ?? 50;
                         radio.dataset.zoneMinOrder= data.min_order ?? 0;
                     }
                 }
-                if (checkedCount === addressData.length) {
-                    applySelectedRadio();
-                }
+                applySelectedRadio();
             });
         });
 

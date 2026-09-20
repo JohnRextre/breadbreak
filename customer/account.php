@@ -103,27 +103,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
         } elseif ($addrCount >= $MAX_ADDRESSES) {
             $addressError = "You can save up to $MAX_ADDRESSES addresses. Please remove one before adding a new one.";
         } else {
-            try {
-                $pdo->beginTransaction();
-                if ($isDefault) {
-                    $pdo->prepare('UPDATE customer_addresses SET is_default = 0 WHERE customer_id = :cid')->execute(['cid' => $customerId]);
+            // Validate address is within delivery zone
+            $inRangeSetting = $pdo->prepare('SELECT setting_value FROM delivery_settings WHERE setting_key = "in_range_areas" LIMIT 1');
+            $inRangeSetting->execute();
+            $inRangeAreas = json_decode($inRangeSetting->fetchColumn() ?: '[]', true) ?: [];
+
+            $searchString = mb_strtolower($fullAddr . ' ' . $barangay . ' ' . $city . ' ' . $province);
+            $zoneAllowed = false;
+            foreach ($inRangeAreas as $area) {
+                if (str_contains($searchString, mb_strtolower($area))) {
+                    $zoneAllowed = true;
+                    break;
                 }
-                // If this is the first address, make it default automatically
-                if ($addrCount === 0) $isDefault = 1;
-                $pdo->prepare(
-                    "INSERT INTO customer_addresses (customer_id, label, full_address, barangay, city, province, postal_code, is_default)
-                     VALUES (:cid, :label, :full, :bar, :city, :prov, :postal, :def)"
-                )->execute([
-                    'cid' => $customerId, 'label' => $label ?: 'Home',
-                    'full' => $fullAddr, 'bar' => $barangay, 'city' => $city,
-                    'prov' => $province, 'postal' => $postal, 'def' => $isDefault,
-                ]);
-                $pdo->commit();
-                $addressSuccess = 'Address saved successfully.';
-                $addrCount++;
-            } catch (Throwable $e) {
-                if ($pdo->inTransaction()) $pdo->rollBack();
-                $addressError = 'Could not save address. Please try again.';
+            }
+
+            if (!$zoneAllowed && !empty($inRangeAreas)) {
+                $addressError = 'Sorry, this address is beyond our 8km delivery zone and cannot be saved.';
+            } else {
+                try {
+                    $pdo->beginTransaction();
+                    if ($isDefault) {
+                        $pdo->prepare('UPDATE customer_addresses SET is_default = 0 WHERE customer_id = :cid')->execute(['cid' => $customerId]);
+                    }
+                    // If this is the first address, make it default automatically
+                    if ($addrCount === 0) $isDefault = 1;
+                    $pdo->prepare(
+                        "INSERT INTO customer_addresses (customer_id, label, full_address, barangay, city, province, postal_code, is_default)
+                         VALUES (:cid, :label, :full, :bar, :city, :prov, :postal, :def)"
+                    )->execute([
+                        'cid' => $customerId, 'label' => $label ?: 'Home',
+                        'full' => $fullAddr, 'bar' => $barangay, 'city' => $city,
+                        'prov' => $province, 'postal' => $postal, 'def' => $isDefault,
+                    ]);
+                    $pdo->commit();
+                    $addressSuccess = 'Address saved successfully.';
+                    $addrCount++;
+                } catch (Throwable $e) {
+                    if ($pdo->inTransaction()) $pdo->rollBack();
+                    $addressError = 'Could not save address. Please try again.';
+                }
             }
         }
     }
@@ -325,9 +343,9 @@ require __DIR__ . '/../includes/header.php';
                             </div>
                             <!-- Zone check result for new address -->
                             <div id="addr-zone-result" class="zone-check-result" style="display:none;margin-top:.5rem;" aria-live="polite"></div>
-                            <p style="font-size:.8rem;color:var(--muted);margin:.5rem 0 0;">We'll check your address against our delivery zones when you save.</p>
-                            <div style="display:flex;gap:.75rem;margin-top:1rem;flex-wrap:wrap;">
-                                <button type="submit" class="account-save-button" style="margin:0;">Save Address</button>
+                            <div id="addr-save-hint" style="font-size:.82rem;margin-top:.5rem;font-weight:600;min-height:1rem;"></div>
+                            <div style="display:flex;gap:.75rem;margin-top:.75rem;flex-wrap:wrap;">
+                                <button type="submit" class="account-save-button" id="addr-save-btn" style="margin:0;">Save Address</button>
                                 <button type="button" class="addr-btn addr-btn-default" id="addr-add-cancel">Cancel</button>
                             </div>
                         </form>
@@ -481,6 +499,21 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
+    const saveBtn  = document.getElementById('addr-save-btn');
+    const saveHint = document.getElementById('addr-save-hint');
+
+    function setSaveButtonState(enabled, message) {
+        if (saveBtn) {
+            saveBtn.disabled = !enabled;
+            saveBtn.style.opacity = enabled ? '1' : '0.45';
+            saveBtn.style.cursor = enabled ? 'pointer' : 'not-allowed';
+        }
+        if (saveHint) {
+            saveHint.innerHTML = message || '';
+            saveHint.style.color = enabled ? '#1a6645' : '#891515';
+        }
+    }
+
     function updateDistanceDisplay(distKm) {
         const distBadge = document.getElementById('map-distance-km');
         const statusBadge = document.getElementById('map-zone-status');
@@ -492,8 +525,10 @@ document.addEventListener('DOMContentLoaded', function () {
         if (statusBadge) {
             if (distKm <= 8.0) {
                 statusBadge.innerHTML = '<span style="color:#1d7044;font-weight:700;"><i class="fa-solid fa-circle-check" style="color:#28a067;margin-right:.3rem;"></i>Within 8km Delivery Zone (' + distKm.toFixed(1) + ' km)</span>';
+                setSaveButtonState(true, '');
             } else {
-                statusBadge.innerHTML = '<span style="color:#c53030;font-weight:700;"><i class="fa-solid fa-circle-xmark" style="color:#e53e3e;margin-right:.3rem;"></i>Beyond 8km Delivery Zone (' + distKm.toFixed(1) + ' km)</span>';
+                statusBadge.innerHTML = '<span style="color:#c53030;font-weight:700;"><i class="fa-solid fa-circle-xmark" style="color:#e53e3e;margin-right:.3rem;"></i>Beyond 8km Delivery Zone (' + distKm.toFixed(1) + ' km) — Cannot save</span>';
+                setSaveButtonState(false, '<i class="fa-solid fa-circle-xmark" style="margin-right:.3rem;"></i>Cannot save: This location is beyond our 8km delivery zone.');
             }
         }
     }
@@ -640,10 +675,12 @@ document.addEventListener('DOMContentLoaded', function () {
                 });
                 const data = await resp.json();
                 if (data.allowed) {
-                    const fee = data.delivery_fee > 0 ? ' · ₱' + data.delivery_fee + ' delivery fee' : ' · Free delivery';
+                    const fee = data.delivery_fee > 0 ? ' · ₱' + data.delivery_fee + ' delivery fee' : ' · ₱50.00 delivery fee';
                     showAddrZone('allowed', (data.message || 'Delivery available.') + fee);
+                    setSaveButtonState(true, '');
                 } else {
-                    showAddrZone('warning', (data.message || 'Outside delivery zone.') + ' You can still save this address, but for orders outside 8km, you can select Store Pickup (Free) at checkout.');
+                    showAddrZone('blocked', (data.message || 'Outside 8km delivery zone.') + ' Addresses beyond 8km cannot be saved.');
+                    setSaveButtonState(false, '<i class="fa-solid fa-circle-xmark" style="margin-right:.3rem;"></i>Cannot save: This address is beyond our 8km delivery zone.');
                 }
             } catch (e) {
                 zoneResult.style.display = 'none';
