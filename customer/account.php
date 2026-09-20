@@ -643,7 +643,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     const fee = data.delivery_fee > 0 ? ' · ₱' + data.delivery_fee + ' delivery fee' : ' · Free delivery';
                     showAddrZone('allowed', (data.message || 'Delivery available.') + fee);
                 } else {
-                    showAddrZone('warning', (data.message || 'Outside delivery zone.') + ' You can still save this address, but it may not be selectable at checkout.');
+                    showAddrZone('warning', (data.message || 'Outside delivery zone.') + ' You can still save this address, but for orders outside 8km, you can select Store Pickup (Free) at checkout.');
                 }
             } catch (e) {
                 zoneResult.style.display = 'none';

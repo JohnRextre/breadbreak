@@ -103,13 +103,14 @@ function serverCheckDelivery(string $address, string $mode, array $inAreas, arra
         $normalized = mb_strtolower(trim($address));
         foreach ($inAreas as $area) {
             if (str_contains($normalized, mb_strtolower($area))) {
-                $zone = $zones[0] ?? ['name' => 'zone_1', 'fee' => 0, 'min_order' => 0];
-                return ['allowed' => true, 'fee' => (int) $zone['fee'], 'min_order' => (int) $zone['min_order']];
+                $zone = $zones[0] ?? ['name' => 'zone_1', 'fee' => 50, 'min_order' => 0];
+                $fee = isset($zone['fee']) ? (int) $zone['fee'] : 50;
+                return ['allowed' => true, 'fee' => $fee, 'min_order' => (int) ($zone['min_order'] ?? 0)];
             }
         }
         return ['allowed' => false, 'fee' => 0, 'min_order' => 0];
     }
-    return ['allowed' => true, 'fee' => 0, 'min_order' => 0];
+    return ['allowed' => true, 'fee' => 50, 'min_order' => 0];
 }
 
 // ── Handle POST: create order + payment request ──
@@ -1063,7 +1064,7 @@ $pageTitle = 'Checkout | BreadBreak';
             const data = await resp.json();
             onResult(data);
         } catch (err) {
-            onResult({ allowed: true, delivery_fee: 0, min_order: 0, message: 'Unable to verify zone. Order will be reviewed by staff.', _error: true });
+            onResult({ allowed: true, delivery_fee: 50, min_order: 0, message: 'Delivery available · ₱50 delivery fee', _error: true });
         }
     }
 
@@ -1081,7 +1082,7 @@ $pageTitle = 'Checkout | BreadBreak';
         if (checked.closest('[data-address-card]')) checked.closest('[data-address-card]').classList.add('is-checked');
 
         const allowed  = checked.dataset.zoneAllowed;
-        const fee      = parseFloat(checked.dataset.zoneFee ?? 0);
+        const fee      = parseFloat(checked.dataset.zoneFee ?? 50);
         const minOrder = parseFloat(checked.dataset.zoneMinOrder ?? 0);
 
         if (allowed === undefined) {
@@ -1093,7 +1094,7 @@ $pageTitle = 'Checkout | BreadBreak';
             hiddenFee.value  = 0;
             hiddenAddr.value = '';
             updateSummaryFee(null);
-            setOrderButton(false, 'This address is outside our delivery zone.');
+            setOrderButton(false, 'This address is outside our 8km delivery zone. Switch to Store Pickup to continue.');
             return;
         }
         if (minOrder > 0 && cartSubtotal < minOrder) {
@@ -1111,13 +1112,23 @@ $pageTitle = 'Checkout | BreadBreak';
 
     if (savedAddrList && radios.length > 0) {
         const addressData = <?php
-            $addrJsonList = array_map(fn($a) => [
-                'id'   => $a['id'],
-                'text' => $a['full_address'] . (
-                    ($m = implode(', ', array_filter([$a['barangay'], $a['city'], $a['province']])))
-                    ? ', ' . $m : ''
-                ),
-            ], $savedAddresses ?? []);
+            $addrJsonList = array_map(function($a) {
+                $full = trim($a['full_address']);
+                $bar  = trim($a['barangay']);
+                $city = trim($a['city']);
+                $prov = trim($a['province']);
+                $text = $full;
+                if ($city && !str_contains($full, $city)) {
+                    $text .= ', ' . $city;
+                }
+                if ($prov && !str_contains($full, $prov)) {
+                    $text .= ', ' . $prov;
+                }
+                return [
+                    'id'   => $a['id'],
+                    'text' => $text,
+                ];
+            }, $savedAddresses ?? []);
             echo json_encode($addrJsonList);
         ?>;
 
@@ -1129,16 +1140,21 @@ $pageTitle = 'Checkout | BreadBreak';
                 checkedCount++;
                 if (statusEl) {
                     if (data.allowed) {
-                        const fee = data.delivery_fee > 0 ? ' · ' + formatPHP(data.delivery_fee) + ' delivery fee' : ' · Free delivery';
-                        statusEl.innerHTML = '<span style="color:#1a6645;font-size:.8rem;"><i class="fa-solid fa-circle-check"></i> ' + (data.message || 'Delivery available') + fee + '</span>';
+                        const fee = parseFloat(data.delivery_fee ?? 50);
+                        const feeText = fee > 0 ? ' · ' + formatPHP(fee) + ' delivery fee' : ' · Free delivery';
+                        statusEl.innerHTML = '<span style="color:#1a6645;font-size:.82rem;font-weight:600;"><i class="fa-solid fa-circle-check" style="margin-right:.3rem;"></i>' + (data.message || 'Delivery available') + feeText + '</span>';
                     } else {
-                        statusEl.innerHTML = '<span style="color:#891515;font-size:.8rem;"><i class="fa-solid fa-circle-xmark"></i> Outside delivery zone</span>';
+                        statusEl.innerHTML = '<div style="color:#891515;font-size:.82rem;margin-top:.4rem;background:#fff5f5;border:1px solid #fecaca;border-radius:10px;padding:.6rem .85rem;">' +
+                            '<div style="font-weight:700;display:flex;align-items:center;gap:.35rem;"><i class="fa-solid fa-circle-xmark" style="color:#e53e3e;"></i> Outside 8km Delivery Zone</div>' +
+                            '<div style="margin-top:.25rem;font-size:.78rem;color:#742a2a;line-height:1.4;">Delivery is unavailable for this address, but you can choose <strong>Store Pickup (Free)</strong>!</div>' +
+                            '<button type="button" class="addr-btn addr-btn-default switch-to-pickup-btn" style="margin-top:.45rem;font-size:.78rem;padding:.3rem .75rem;background:#fff;border:1.5px solid var(--accent);color:var(--accent);font-weight:700;cursor:pointer;border-radius:6px;display:inline-flex;align-items:center;gap:.35rem;"><i class="fa-solid fa-store"></i> Switch to Store Pickup (Free)</button>' +
+                        '</div>';
                     }
                     const radio = savedAddrList.querySelector('[data-address-radio][value="' + CSS.escape(addr.text) + '"]') ||
                                   [...radios].find(r => r.value === addr.text);
                     if (radio) {
                         radio.dataset.zoneAllowed = data.allowed ? '1' : '0';
-                        radio.dataset.zoneFee     = data.delivery_fee ?? 0;
+                        radio.dataset.zoneFee     = data.delivery_fee ?? 50;
                         radio.dataset.zoneMinOrder= data.min_order ?? 0;
                     }
                 }
@@ -1193,7 +1209,7 @@ $pageTitle = 'Checkout | BreadBreak';
 
         await checkZone(address, function (data) {
             if (data.allowed) {
-                const fee = parseFloat(data.delivery_fee ?? 0);
+                const fee = parseFloat(data.delivery_fee ?? 50);
                 hiddenAddr.value = address;
                 hiddenFee.value  = fee;
                 updateSummaryFee(fee);
@@ -1208,11 +1224,32 @@ $pageTitle = 'Checkout | BreadBreak';
                 hiddenAddr.value = '';
                 hiddenFee.value  = 0;
                 updateSummaryFee(null);
-                if (resultBox) showInlineResult(resultBox, 'blocked', data.message || "Sorry, we don't deliver to your area yet.");
-                setOrderButton(false, 'Delivery not available to this address.');
+                if (resultBox) {
+                    resultBox.style.display = 'flex';
+                    resultBox.className = 'zone-check-result zone-blocked';
+                    resultBox.innerHTML = '<i class="fa-solid fa-circle-xmark"></i><div style="flex:1;">' +
+                        '<strong>Outside 8km Delivery Zone</strong>' +
+                        '<p style="margin:.25rem 0 .4rem;font-size:.82rem;">Delivery is not available for this address, but you can switch to <strong>Store Pickup (Free)</strong>.</p>' +
+                        '<button type="button" class="addr-btn addr-btn-default switch-to-pickup-btn" style="font-size:.78rem;padding:.3rem .75rem;background:#fff;border:1.5px solid var(--accent);color:var(--accent);font-weight:700;cursor:pointer;border-radius:6px;display:inline-flex;align-items:center;gap:.35rem;"><i class="fa-solid fa-store"></i> Switch to Store Pickup (Free)</button>' +
+                    '</div>';
+                }
+                setOrderButton(false, 'Selected address is outside our 8km delivery zone. Switch to Store Pickup to continue.');
             }
         });
     }
+
+    // ── Global switch to pickup button listener ────────────────────────────────
+    document.addEventListener('click', function (e) {
+        const btn = e.target.closest('.switch-to-pickup-btn');
+        if (btn) {
+            e.preventDefault();
+            setFulfillmentMode('pickup');
+            const selectorCard = document.querySelector('.fulfillment-selector-card');
+            if (selectorCard) {
+                selectorCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+    });
 
     if (addrTextarea) {
         addrTextarea.addEventListener('input', function () {

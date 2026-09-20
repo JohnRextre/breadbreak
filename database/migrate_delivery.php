@@ -103,13 +103,17 @@ $defaults = [
     'branch_name'   => 'Estrella Village Branch',
     'max_drive_time_min' => '25',
     'delivery_zones' => json_encode([
-        ['name' => 'zone_1', 'label' => 'Zone 1', 'max_km' => 3,  'fee' => 0,  'min_order' => 0],
-        ['name' => 'zone_2', 'label' => 'Zone 2', 'max_km' => 6,  'fee' => 50, 'min_order' => 0],
-        ['name' => 'zone_3', 'label' => 'Zone 3', 'max_km' => 8,  'fee' => 80, 'min_order' => 300],
+        ['name' => 'zone_1', 'label' => 'Standard Delivery (within 8km)', 'max_km' => 8, 'fee' => 50, 'min_order' => 0],
     ]),
     'in_range_areas' => json_encode([
-        'guiguinto','ilang-ilang','ligas','malolos','meycauayan',
-        'san jose del monte','plaridel','hagonoy'
+        'guiguinto', 'ilang-ilang', 'ligas', 'paltao', 'malolos', 'plaridel',
+        'balagtas', 'pulilan', 'bocaue', 'bulakan', 'bulacan', 'pandi',
+        'calumpit', 'paombong', 'bustos', 'baliwag', 'baliuag', 'santa maria',
+        'sta. maria', 'marilao', 'meycauayan', 'san jose del monte', 'hagonoy',
+        'tikay', 'tabang', 'poblacion', 'daungan', 'cutcot', 'dampol', 'longos',
+        'sto. cristo', 'lumbac', 'tibag', 'estacion', 'san pablo', 'san marcos',
+        'penabatan', 'peñabatan', 'sta. cruz', 'santa cruz', 'tuktukan', 'tabe',
+        'malis', 'panginay', 'pritil', 'pulong gubat', 'santa ines', 'sta. ines'
     ]),
     'geoapify_api_key' => '',
 ];
