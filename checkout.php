@@ -806,55 +806,96 @@ $pageTitle = 'Checkout | BreadBreak';
         box.innerHTML = '<i class="fa-solid ' + (icons[type] || 'fa-info') + '"></i><span>' + message + '</span>';
     }
 
+    // ── Master Validation & Button State ──────────────────────────────────────
+    function updateOrderButtonState() {
+        // 1. Check address
+        if (!hiddenAddr.value || hiddenAddr.value.trim() === '') {
+            setOrderButton(false, 'Please select or enter a delivery address.');
+            return false;
+        }
+
+        // 2. Check saved address zone status if using radio
+        if (savedAddrList && !usingOtherAddr) {
+            const checked = [...radios].find(r => r.checked);
+            if (!checked) {
+                setOrderButton(false, 'Select a delivery address to continue.');
+                return false;
+            }
+            if (checked.dataset.zoneAllowed === '0') {
+                setOrderButton(false, 'This address is outside our delivery zone.');
+                return false;
+            }
+            if (checked.dataset.zoneAllowed === undefined) {
+                setOrderButton(false, 'Checking delivery zone…');
+                return false;
+            }
+            const minOrder = parseFloat(checked.dataset.zoneMinOrder ?? 0);
+            if (minOrder > 0 && cartSubtotal < minOrder) {
+                setOrderButton(false, 'Minimum order of ₱' + minOrder.toLocaleString() + ' required for this zone.');
+                return false;
+            }
+        }
+
+        // 3. Check discount if checked
+        if (applyDiscountCb && applyDiscountCb.checked) {
+            const idVal   = discountIdInput ? discountIdInput.value.trim() : '';
+            const nameVal = discountNameInput ? discountNameInput.value.trim() : '';
+            if (!idVal || !nameVal) {
+                setOrderButton(false, 'Please provide Senior/PWD ID Number and Cardholder Name.');
+                return false;
+            }
+        }
+
+        // All checks passed!
+        setOrderButton(true, '');
+        return true;
+    }
+
     // ── Discount Toggle Listeners ──────────────────────────────────────────────
     if (applyDiscountCb) {
+        // Ensure UI state matches checkbox on load
+        if (discountWrap) discountWrap.style.display = applyDiscountCb.checked ? 'block' : 'none';
+
         applyDiscountCb.addEventListener('change', function () {
             const checked = this.checked;
-            discountWrap.style.display = checked ? 'block' : 'none';
-            hiddenApplyDisc.value = checked ? '1' : '0';
+            if (discountWrap) discountWrap.style.display = checked ? 'block' : 'none';
+            if (hiddenApplyDisc) hiddenApplyDisc.value = checked ? '1' : '0';
 
             const selectedType = document.querySelector('input[name="discount_type_radio"]:checked')?.value || 'senior';
-            hiddenDiscType.value = checked ? selectedType : 'none';
+            if (hiddenDiscType) hiddenDiscType.value = checked ? selectedType : 'none';
 
             if (checked) {
-                hiddenDiscId.value   = discountIdInput.value.trim();
-                hiddenDiscName.value = discountNameInput.value.trim();
+                if (hiddenDiscId) hiddenDiscId.value   = discountIdInput.value.trim();
+                if (hiddenDiscName) hiddenDiscName.value = discountNameInput.value.trim();
                 if (discountIdInput.value.trim() === '') discountIdInput.focus();
             } else {
-                hiddenDiscId.value   = '';
-                hiddenDiscName.value = '';
+                if (hiddenDiscId) hiddenDiscId.value   = '';
+                if (hiddenDiscName) hiddenDiscName.value = '';
             }
 
             recalculateTotal();
-            validateDiscountAndButton();
+            updateOrderButtonState();
         });
 
         document.querySelectorAll('input[name="discount_type_radio"]').forEach(r => {
             r.addEventListener('change', function () {
-                if (applyDiscountCb.checked) hiddenDiscType.value = this.value;
+                if (applyDiscountCb.checked && hiddenDiscType) hiddenDiscType.value = this.value;
             });
         });
 
-        discountIdInput.addEventListener('input', function () {
-            hiddenDiscId.value = this.value.trim();
-            validateDiscountAndButton();
-        });
-
-        discountNameInput.addEventListener('input', function () {
-            hiddenDiscName.value = this.value.trim();
-            validateDiscountAndButton();
-        });
-    }
-
-    function validateDiscountAndButton() {
-        if (!applyDiscountCb.checked) return true;
-        const idVal   = discountIdInput.value.trim();
-        const nameVal = discountNameInput.value.trim();
-        if (!idVal || !nameVal) {
-            setOrderButton(false, 'Please provide Senior/PWD ID Number and Cardholder Name.');
-            return false;
+        if (discountIdInput) {
+            discountIdInput.addEventListener('input', function () {
+                if (hiddenDiscId) hiddenDiscId.value = this.value.trim();
+                updateOrderButtonState();
+            });
         }
-        return true;
+
+        if (discountNameInput) {
+            discountNameInput.addEventListener('input', function () {
+                if (hiddenDiscName) hiddenDiscName.value = this.value.trim();
+                updateOrderButtonState();
+            });
+        }
     }
 
     // ── Zone check API call ───────────────────────────────────────────────────
@@ -916,7 +957,11 @@ $pageTitle = 'Checkout | BreadBreak';
         function applySelectedRadio() {
             if (usingOtherAddr) return;
             const checked = [...radios].find(r => r.checked);
-            if (!checked) { setOrderButton(false, 'Select a delivery address to continue.'); return; }
+            if (!checked) {
+                hiddenAddr.value = '';
+                updateOrderButtonState();
+                return;
+            }
 
             addrCards.forEach(c => c.classList.remove('is-checked'));
             if (checked.closest('[data-address-card]')) checked.closest('[data-address-card]').classList.add('is-checked');
@@ -947,10 +992,7 @@ $pageTitle = 'Checkout | BreadBreak';
             hiddenAddr.value = checked.value;
             hiddenFee.value  = fee;
             updateSummaryFee(fee);
-
-            if (validateDiscountAndButton()) {
-                setOrderButton(true, '');
-            }
+            updateOrderButtonState();
         }
 
         radios.forEach(function (radio) {
@@ -998,20 +1040,21 @@ $pageTitle = 'Checkout | BreadBreak';
             updateSummaryFee(null);
 
             await checkZone(address, function (data) {
-                hiddenAddr.value = address;
                 if (data.allowed) {
                     const fee = parseFloat(data.delivery_fee ?? 0);
-                    hiddenFee.value = fee;
+                    hiddenAddr.value = address;
+                    hiddenFee.value  = fee;
                     updateSummaryFee(fee);
                     if (resultBox) showInlineResult(resultBox, data.drive_warning ? 'warning' : 'allowed', data.message || 'Delivery available.');
                     if (data.min_order && cartSubtotal < data.min_order) {
                         if (resultBox) showInlineResult(resultBox, 'blocked', 'Minimum order of ₱' + data.min_order.toLocaleString() + ' required for this zone.');
                         setOrderButton(false, 'Minimum order not met for your zone.');
-                    } else if (validateDiscountAndButton()) {
-                        setOrderButton(true, '');
+                    } else {
+                        updateOrderButtonState();
                     }
                 } else {
-                    hiddenFee.value = 0;
+                    hiddenAddr.value = '';
+                    hiddenFee.value  = 0;
                     updateSummaryFee(null);
                     if (resultBox) showInlineResult(resultBox, 'blocked', data.message || "Sorry, we don't deliver to your area yet.");
                     setOrderButton(false, 'Delivery not available to this address.');
@@ -1024,6 +1067,7 @@ $pageTitle = 'Checkout | BreadBreak';
             clearTimeout(checkTimer);
             if (val.length < 5) {
                 if (resultBox) resultBox.style.display = 'none';
+                hiddenAddr.value = '';
                 if (!savedAddrList) setOrderButton(false, 'Enter your delivery address to continue.');
                 updateSummaryFee(null);
                 lastChecked = '';
