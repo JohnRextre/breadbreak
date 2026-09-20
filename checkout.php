@@ -550,12 +550,22 @@ $pageTitle = 'Checkout | BreadBreak';
                         </div>
                     </div>
 
-                    <!-- BreadBreak Location Image Preview -->
+                    <!-- Interactive Google Maps Embed (100% Free) -->
                     <div class="pickup-map-container">
-                        <img src="/BreadBreak/assets/breadbreak_png/breadbreak_location.png" alt="BreadBreak Bakery Location Map" class="pickup-map-img" />
+                        <iframe 
+                            src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3856.89935785534!2d120.86967517519058!3d14.830905485683221!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x339653f14f7970b1%3A0x6472797c39ec3f75!2sBread%20Break!5e0!3m2!1sen!2sph!4v1789883477934!5m2!1sen!2sph" 
+                            width="100%" 
+                            height="280" 
+                            style="border:0;display:block;" 
+                            allowfullscreen="" 
+                            loading="lazy" 
+                            referrerpolicy="strict-origin-when-cross-origin">
+                        </iframe>
                         <div class="pickup-map-caption">
                             <span><i class="fa-solid fa-map-pin" style="margin-right:.3rem;color:var(--accent)"></i>Estrella Village, Guiguinto, Bulacan</span>
-                            <span style="font-weight:600;color:var(--brown-900);">BreadBreak Main Bakery</span>
+                            <a href="https://www.google.com/maps/search/?api=1&query=Bread+Break+Estrella+Village+Guiguinto+Bulacan" target="_blank" rel="noopener noreferrer" style="font-weight:700;color:var(--accent);text-decoration:none;font-size:.82rem;">
+                                <i class="fa-solid fa-diamond-turn-right" style="margin-right:.25rem;"></i>Get Directions
+                            </a>
                         </div>
                     </div>
                 </div>
