@@ -3,27 +3,52 @@ require_once __DIR__ . '/../includes/auth.php';
 requireRole('staff');
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/order_status.php';
+require_once __DIR__ . '/../includes/rider.php';
 
 $pageTitle = 'Orders';
 $activePage = 'orders';
 
 $pdo = getDatabaseConnection();
+ensureOrderStatusEnum($pdo);
+ensureRiderSupport($pdo);
+
+$riders = activeRiders($pdo);
 
 // Handle status update by staff
 $statusSuccess = '';
 $statusError = '';
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_status') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && in_array($_POST['action'], ['update_status', 'assign_rider'], true)) {
     $orderId = (int) ($_POST['order_id'] ?? 0);
     $newStatus = trim($_POST['status'] ?? '');
-    $allowedStatuses = ['pending', 'processing', 'completed', 'cancelled'];
+    $postedRider = (int) ($_POST['rider_id'] ?? 0);
+    $allowedStatuses = allowedOrderStatuses();
 
-    if ($orderId > 0 && in_array($newStatus, $allowedStatuses, true)) {
-        try {
-            $updateStmt = $pdo->prepare("UPDATE orders SET status = :status, updated_at = NOW() WHERE id = :id");
-            $updateStmt->execute(['status' => $newStatus, 'id' => $orderId]);
-            $statusSuccess = "Order #" . htmlspecialchars($_POST['ref'] ?? '') . " status updated to " . ucfirst($newStatus) . ".";
-        } catch (Throwable $e) {
-            $statusError = "Unable to update order status.";
+    $currentStmt = $pdo->prepare('SELECT id, reference_id, status, fulfillment_type, rider_id FROM orders WHERE id = :id LIMIT 1');
+    $currentStmt->execute(['id' => $orderId]);
+    $currentOrder = $currentStmt->fetch();
+
+    if (!$currentOrder) {
+        $statusError = 'Order was not found.';
+    } else {
+        $fulfillment = $currentOrder['fulfillment_type'] ?? 'delivery';
+        $nextStatus = $newStatus !== '' && in_array($newStatus, $allowedStatuses, true) ? $newStatus : $currentOrder['status'];
+        $riderId = $fulfillment === 'delivery' ? ($postedRider > 0 ? $postedRider : (int) $currentOrder['rider_id']) : 0;
+
+        if ($fulfillment === 'delivery' && $nextStatus === 'out_for_delivery' && $riderId <= 0) {
+            $statusError = 'Assign a rider before marking this order On the Way.';
+        } else {
+            try {
+                $updateStmt = $pdo->prepare("UPDATE orders SET status = :status, rider_id = :rider_id, updated_at = NOW() WHERE id = :id");
+                $updateStmt->execute([
+                    'status' => $nextStatus,
+                    'rider_id' => $riderId > 0 ? $riderId : null,
+                    'id' => $orderId,
+                ]);
+                $statusSuccess = "Order #" . htmlspecialchars($currentOrder['reference_id']) . " updated.";
+            } catch (Throwable $e) {
+                $statusError = "Unable to update order.";
+            }
         }
     }
 }
@@ -34,16 +59,19 @@ $statusFilter = trim($_GET['status'] ?? 'all');
 
 $query = "SELECT o.id, o.reference_id, o.status AS order_status, o.created_at,
                  o.fulfillment_type, o.delivery_fee, o.delivery_address, o.discount_type, o.discount_amount, o.discount_id_number, o.discount_name,
+                 o.rider_id, o.payment_method, o.total_amount,
                  u.first_name, u.last_name, u.email, u.phone,
-                 p.amount, p.payment_method, p.payment_channel, p.status AS payment_status
+                 p.amount, p.payment_method AS pay_method, p.payment_channel, p.status AS payment_status,
+                 r.first_name AS rider_first, r.last_name AS rider_last
           FROM orders o
           JOIN users u ON u.id = o.customer_id
           LEFT JOIN payments p ON p.order_id = o.id
+          LEFT JOIN users r ON r.id = o.rider_id
           WHERE 1=1";
 
 $params = [];
 
-if ($statusFilter !== 'all' && in_array($statusFilter, ['pending', 'processing', 'completed', 'cancelled'], true)) {
+if ($statusFilter !== 'all' && in_array($statusFilter, allowedOrderStatuses(), true)) {
     $query .= " AND o.status = :status";
     $params['status'] = $statusFilter;
 }
@@ -151,8 +179,10 @@ require __DIR__ . '/../includes/staff_header.php';
             <div class="select-control" style="margin: 0;">
                 <select name="status" onchange="this.form.submit()" style="height: 42px; border-radius: 8px; border: 1px solid var(--admin-line); padding: 0 32px 0 12px; font-size: 13px; font-weight: 600; color: var(--admin-ink);">
                     <option value="all" <?php echo $statusFilter === 'all' ? 'selected' : ''; ?>>All Statuses</option>
-                    <option value="pending" <?php echo $statusFilter === 'pending' ? 'selected' : ''; ?>>Pending</option>
-                    <option value="processing" <?php echo $statusFilter === 'processing' ? 'selected' : ''; ?>>Processing</option>
+                    <option value="pending" <?php echo $statusFilter === 'pending' ? 'selected' : ''; ?>>Received</option>
+                    <option value="processing" <?php echo $statusFilter === 'processing' ? 'selected' : ''; ?>>Baking</option>
+                    <option value="out_for_delivery" <?php echo $statusFilter === 'out_for_delivery' ? 'selected' : ''; ?>>On the Way</option>
+                    <option value="ready_for_pickup" <?php echo $statusFilter === 'ready_for_pickup' ? 'selected' : ''; ?>>Ready for Pickup</option>
                     <option value="completed" <?php echo $statusFilter === 'completed' ? 'selected' : ''; ?>>Completed</option>
                     <option value="cancelled" <?php echo $statusFilter === 'cancelled' ? 'selected' : ''; ?>>Cancelled</option>
                 </select>
@@ -187,6 +217,7 @@ require __DIR__ . '/../includes/staff_header.php';
                         <th style="min-width: 130px;">Total Amount</th>
                         <th style="min-width: 130px;">Payment</th>
                         <th style="min-width: 130px;">Order Status</th>
+                        <th style="min-width: 160px;">Rider</th>
                         <th style="min-width: 140px; text-align: right;">Update Status</th>
                     </tr>
                 </thead>
@@ -262,27 +293,53 @@ require __DIR__ . '/../includes/staff_header.php';
                             <?php endif; ?>
                         </td>
                         <td>
-                            <?php if ($ordStatus === 'processing'): ?>
-                                <span class="status-chip is-processing"><i class="fa-solid fa-rotate"></i> Processing</span>
-                            <?php elseif ($ordStatus === 'completed'): ?>
-                                <span class="status-chip is-completed"><i class="fa-solid fa-check"></i> Completed</span>
-                            <?php elseif ($ordStatus === 'cancelled'): ?>
-                                <span class="status-chip is-cancelled"><i class="fa-solid fa-ban"></i> Cancelled</span>
+                            <?php
+                            $statusChip = match ($ordStatus) {
+                                'processing' => ['is-processing', 'bread-slice', 'Baking'],
+                                'out_for_delivery' => ['is-processing', 'motorcycle', 'On the Way'],
+                                'ready_for_pickup' => ['is-processing', 'store', 'Ready for Pickup'],
+                                'completed' => ['is-completed', 'check', 'Completed'],
+                                'cancelled' => ['is-cancelled', 'ban', 'Cancelled'],
+                                default => ['is-pending', 'clipboard-list', 'Received'],
+                            };
+                            ?>
+                            <span class="status-chip <?php echo $statusChip[0]; ?>"><i class="fa-solid fa-<?php echo $statusChip[1]; ?>"></i> <?php echo $statusChip[2]; ?></span>
+                        </td>
+                        <td>
+                            <?php if (($o['fulfillment_type'] ?? 'delivery') === 'pickup'): ?>
+                                <span style="color: var(--admin-muted); font-size: 12px;">Pickup — no rider</span>
                             <?php else: ?>
-                                <span class="status-chip is-pending"><i class="fa-solid fa-hourglass-half"></i> Pending</span>
+                                <form method="POST" style="margin: 0;">
+                                    <input type="hidden" name="action" value="assign_rider" />
+                                    <input type="hidden" name="order_id" value="<?php echo $oid; ?>" />
+                                    <input type="hidden" name="status" value="<?php echo htmlspecialchars($ordStatus); ?>" />
+                                    <div class="status-select-wrap">
+                                        <select name="rider_id" onchange="this.form.submit()">
+                                            <option value="0">Assign rider</option>
+                                            <?php foreach ($riders as $rider): ?>
+                                                <option value="<?php echo (int) $rider['id']; ?>" <?php echo (int) $o['rider_id'] === (int) $rider['id'] ? 'selected' : ''; ?>>
+                                                    <?php echo htmlspecialchars(riderDisplayName($rider)); ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                </form>
+                                <?php if (!$riders): ?>
+                                    <small style="display:block;margin-top:4px;color:#a34f43;font-size:10px;">Create a rider account in Admin → Users.</small>
+                                <?php endif; ?>
                             <?php endif; ?>
                         </td>
                         <td style="text-align: right;">
                             <form method="POST" style="margin: 0;">
                                 <input type="hidden" name="action" value="update_status" />
                                 <input type="hidden" name="order_id" value="<?php echo $oid; ?>" />
+                                <input type="hidden" name="rider_id" value="<?php echo (int) ($o['rider_id'] ?? 0); ?>" />
                                 <input type="hidden" name="ref" value="<?php echo htmlspecialchars($o['reference_id']); ?>" />
                                 <div class="status-select-wrap">
                                     <select name="status" onchange="this.form.submit()">
-                                        <option value="pending" <?php echo $ordStatus === 'pending' ? 'selected' : ''; ?>>Pending</option>
-                                        <option value="processing" <?php echo $ordStatus === 'processing' ? 'selected' : ''; ?>>Processing</option>
-                                        <option value="completed" <?php echo $ordStatus === 'completed' ? 'selected' : ''; ?>>Completed</option>
-                                        <option value="cancelled" <?php echo $ordStatus === 'cancelled' ? 'selected' : ''; ?>>Cancelled</option>
+                                        <?php foreach (staffOrderStatusOptions($o['fulfillment_type'] ?? 'delivery') as $value => $label): ?>
+                                            <option value="<?php echo htmlspecialchars($value); ?>" <?php echo $ordStatus === $value ? 'selected' : ''; ?>><?php echo htmlspecialchars($label); ?></option>
+                                        <?php endforeach; ?>
                                     </select>
                                 </div>
                             </form>

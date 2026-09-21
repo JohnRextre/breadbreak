@@ -33,7 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $identifier = trim($_POST['identifier'] ?? '');
     $password = trim($_POST['password'] ?? '');
 
-    $allowedRoles = ['admin' => 'Admin', 'staff' => 'Staff', 'customer' => 'Customer'];
+    $allowedRoles = ['admin' => 'Admin', 'staff' => 'Staff', 'rider' => 'Rider', 'customer' => 'Customer'];
 
     if ($accountType === '') {
         $errors['account_type'] = 'Please select an account type.';
@@ -50,6 +50,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($errors)) {
         try {
             $pdo = getDatabaseConnection();
+            require_once __DIR__ . '/includes/rider.php';
+            ensureRiderSupport($pdo);
             $roleKey = strtolower($accountType);
 
             if (!isset($allowedRoles[$roleKey])) {
@@ -77,11 +79,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['role'] = $user['role'];
                     $_SESSION['email'] = $user['email'];
                     $_SESSION['cart'] = is_array($_SESSION['cart'] ?? null) ? $_SESSION['cart'] : [];
-                    $pdo->exec('CREATE TABLE IF NOT EXISTS customer_cart (user_id INT NOT NULL, variant_id INT NOT NULL, quantity INT NOT NULL DEFAULT 0, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (user_id, variant_id), CONSTRAINT fk_customer_cart_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, CONSTRAINT fk_customer_cart_variant FOREIGN KEY (variant_id) REFERENCES inventory_item_variants(id) ON DELETE CASCADE)');
-                    $savedCartStatement = $pdo->prepare('SELECT variant_id, quantity FROM customer_cart WHERE user_id = :user_id');
-                    $savedCartStatement->execute(['user_id' => (int) $user['id']]);
-                    foreach ($savedCartStatement->fetchAll() as $savedItem) {
-                        $_SESSION['cart'][(int) $savedItem['variant_id']] = (int) $savedItem['quantity'];
+
+                    if ($user['role'] === 'customer') {
+                        $pdo->exec('CREATE TABLE IF NOT EXISTS customer_cart (user_id INT NOT NULL, variant_id INT NOT NULL, quantity INT NOT NULL DEFAULT 0, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (user_id, variant_id), CONSTRAINT fk_customer_cart_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, CONSTRAINT fk_customer_cart_variant FOREIGN KEY (variant_id) REFERENCES inventory_item_variants(id) ON DELETE CASCADE)');
+                        $savedCartStatement = $pdo->prepare('SELECT variant_id, quantity FROM customer_cart WHERE user_id = :user_id');
+                        $savedCartStatement->execute(['user_id' => (int) $user['id']]);
+                        foreach ($savedCartStatement->fetchAll() as $savedItem) {
+                            $_SESSION['cart'][(int) $savedItem['variant_id']] = (int) $savedItem['quantity'];
+                        }
                     }
 
                     if ($user['role'] === 'admin') {
@@ -91,6 +96,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     if ($user['role'] === 'staff') {
                         header('Location: /BreadBreak/staff/dashboard.php');
+                        exit;
+                    }
+
+                    if ($user['role'] === 'rider') {
+                        header('Location: /BreadBreak/rider/dashboard.php');
                         exit;
                     }
 
@@ -150,6 +160,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <option value="" <?php echo $selectedAccountType === '' ? 'selected' : ''; ?>>Select account type</option>
                                 <option value="Admin" <?php echo $selectedAccountType === 'Admin' ? 'selected' : ''; ?>>Admin</option>
                                 <option value="Staff" <?php echo $selectedAccountType === 'Staff' ? 'selected' : ''; ?>>Staff</option>
+                                <option value="Rider" <?php echo $selectedAccountType === 'Rider' ? 'selected' : ''; ?>>Rider</option>
                                 <option value="Customer" <?php echo $selectedAccountType === 'Customer' ? 'selected' : ''; ?>>Customer</option>
                             </select>
                         </div>

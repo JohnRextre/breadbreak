@@ -5,6 +5,7 @@
 require_once __DIR__ . '/includes/auth.php';
 requireRole('customer');
 require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/order_status.php';
 
 $customerId = (int) $_SESSION['user_id'];
 $ref        = trim($_GET['ref'] ?? '');
@@ -28,6 +29,7 @@ if ($ref) {
     $order = $oStmt->fetch();
 
     if ($order) {
+        ensureOrderStatusEnum($pdo);
         // Load order items
         $iStmt = $pdo->prepare(
             "SELECT product_name, service_size, sku, unit_price, quantity, line_total
@@ -52,10 +54,13 @@ if ($ref) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-function paymentStatusBadge(string $status): string
+function paymentStatusBadge(string $status, bool $isCashOrder = false): string
 {
+    if ($isCashOrder && $status === 'pending') {
+        return '<span class="badge badge-cash"><i class="fa-solid fa-coins"></i> Pay on arrival</span>';
+    }
     $map = [
-        'pending' => ['badge-pending', 'clock',         'Pending Verification'],
+        'pending' => ['badge-pending', 'clock',         'Awaiting payment'],
         'paid'    => ['badge-paid',    'circle-check',   'Paid'],
         'failed'  => ['badge-failed',  'circle-xmark',   'Failed'],
         'expired' => ['badge-expired', 'hourglass-end',  'Expired'],
@@ -65,60 +70,53 @@ function paymentStatusBadge(string $status): string
     return '<span class="badge ' . $cls . '"><i class="fa-solid fa-' . $icon . '"></i> ' . $label . '</span>';
 }
 
-function orderStatusBadge(string $status): string
+function orderStatusBadge(string $status, string $fulfillmentType = 'delivery'): string
 {
     $map = [
-        'pending'    => ['badge-pending',    'hourglass-half',  'Pending'],
-        'processing' => ['badge-processing', 'rotate',          'Processing'],
-        'completed'  => ['badge-paid',       'circle-check',    'Completed'],
-        'cancelled'  => ['badge-failed',     'circle-xmark',    'Cancelled'],
+        'pending'            => ['badge-pending',    'clipboard-list',  'Received'],
+        'processing'         => ['badge-processing', 'bread-slice',     'Baking'],
+        'out_for_delivery'   => ['badge-processing', 'motorcycle',      'On the way'],
+        'ready_for_pickup'   => ['badge-processing', 'store',           'Ready'],
+        'completed'          => ['badge-paid',       'circle-check',    $fulfillmentType === 'pickup' ? 'Picked up' : 'Delivered'],
+        'cancelled'          => ['badge-failed',     'circle-xmark',    'Cancelled'],
     ];
-    [$cls, $icon, $label] = $map[$status] ?? ['badge-pending', 'circle-question', ucfirst($status)];
+    [$cls, $icon, $label] = $map[$status] ?? ['badge-pending', 'circle-question', ucfirst(str_replace('_', ' ', $status))];
     return '<span class="badge ' . $cls . '"><i class="fa-solid fa-' . $icon . '"></i> ' . $label . '</span>';
 }
 
 $paymentStatus = $payment['status'] ?? 'pending';
-$orderStatus   = $order['status']   ?? 'pending';
-$orderPayMethod = strtoupper($order['payment_method'] ?? 'GCASH');
+$orderStatus   = is_array($order) ? ($order['status'] ?? 'pending') : 'pending';
+$orderPayMethod = strtoupper(is_array($order) ? ($order['payment_method'] ?? 'GCASH') : 'GCASH');
 $isCashOrder   = ($orderPayMethod === 'CASH');
+$fulfillmentType = is_array($order) ? ($order['fulfillment_type'] ?? 'delivery') : 'delivery';
+$isPickupOrder = $fulfillmentType === 'pickup';
+$cashAmount = (float) (is_array($order) ? ($order['cash_amount'] ?? 0) : 0);
+$orderTotal = (float) (is_array($order) ? ($order['total_amount'] ?? 0) : 0);
+$cashChange = max(0, $cashAmount - $orderTotal);
+$orderStatusUrl = '/BreadBreak/customer/order-status.php' . (is_array($order) ? '?ref=' . urlencode((string) $order['reference_id']) : '');
 // Cash orders with pending status are awaiting physical payment — don't auto-refresh
 $isTerminal    = in_array($paymentStatus, ['paid', 'failed', 'expired', 'voided'], true) || $isCashOrder;
 
 $iconClass = match(true) {
-    $paymentStatus === 'paid'                            => 'icon-paid',
+    $paymentStatus === 'paid' || $isCashOrder            => 'icon-paid',
     in_array($paymentStatus, ['failed','voided'], true) => 'icon-failed',
     $paymentStatus === 'expired'                         => 'icon-expired',
-    $isCashOrder                                         => 'icon-pending',
     default                                              => 'icon-pending',
 };
 $iconSymbol = match(true) {
-    $paymentStatus === 'paid'                            => 'circle-check',
+    $paymentStatus === 'paid' || $isCashOrder            => 'circle-check',
     in_array($paymentStatus, ['failed','voided'], true) => 'circle-xmark',
     $paymentStatus === 'expired'                         => 'hourglass-end',
-    $isCashOrder                                         => 'money-bill-wave',
     default                                              => 'clock',
 };
 
 $pageTitle = 'Order Confirmation | BreadBreak';
+require __DIR__ . '/includes/header.php';
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title><?php echo htmlspecialchars($pageTitle); ?></title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-    <link rel="stylesheet" href="/BreadBreak/assets/css/style.css" />
-    <link rel="stylesheet" href="/BreadBreak/assets/css/checkout.css" />
-    <?php if (!$isTerminal && !$notFound && $order): ?>
-    <!-- Auto-refresh every 5 seconds while payment is still pending -->
-    <meta http-equiv="refresh" content="5" />
-    <?php endif; ?>
-</head>
-<body>
-<?php include __DIR__ . '/includes/header.php'; ?>
+<link rel="stylesheet" href="/BreadBreak/assets/css/checkout.css?v=<?php echo file_exists(__DIR__ . '/assets/css/checkout.css') ? filemtime(__DIR__ . '/assets/css/checkout.css') : time(); ?>" />
+<?php if (!$isTerminal && !$notFound && $order): ?>
+<script>setTimeout(function () { window.location.reload(); }, 5000);</script>
+<?php endif; ?>
 
 <main class="confirmation-page">
 <div class="container">
@@ -130,266 +128,209 @@ $pageTitle = 'Order Confirmation | BreadBreak';
         </div>
         <h1>Order Not Found</h1>
         <p>We couldn't find an order matching this reference. Please check your confirmation email or browse your order history.</p>
-        <a href="/BreadBreak/customer/menu_dashboard.php" class="btn btn-primary" style="margin-top:1rem;">Return to Menu</a>
+        <div class="confirmation-actions" style="border:0;padding-top:1rem;">
+            <a href="/BreadBreak/customer/menu_dashboard.php" class="btn btn-primary">Return to Menu</a>
+            <a href="/BreadBreak/customer/order-status.php" class="btn btn-outline">View Order Status</a>
+        </div>
     </div>
-<?php else: ?>
+<?php else:
+    $pmLabels = [
+        'GCASH'     => ['GCash', '/BreadBreak/assets/images/payments/GCash-Emblem.png'],
+        'PAYMAYA'   => ['Maya', '/BreadBreak/assets/images/payments/maya-emblem.png'],
+        'GRABPAY'   => ['GrabPay', '/BreadBreak/assets/images/payments/grabpay-emblem.png'],
+        'SHOPEEPAY' => ['ShopeePay', '/BreadBreak/assets/images/payments/Shopeepay-emblem.png'],
+        'CARD'      => ['Credit / Debit Card', '/BreadBreak/assets/images/payments/card.svg'],
+        'CASH'      => ['Cash on ' . ($isPickupOrder ? 'Pickup' : 'Delivery'), '/BreadBreak/assets/images/payments/P-Cash-emblem.png'],
+    ];
+    [$pmName, $pmLogo] = $pmLabels[$orderPayMethod] ?? [$orderPayMethod, ''];
+?>
 
-    <!-- Hero -->
     <div class="confirmation-hero">
         <div class="confirmation-icon <?php echo $iconClass; ?>">
             <i class="fa-solid fa-<?php echo $iconSymbol; ?>"></i>
         </div>
         <?php if ($paymentStatus === 'paid'): ?>
-            <h1 style="color:var(--brown-900)">Payment Confirmed!</h1>
-            <p>Your BreadBreak order has been received and is now being processed. Thank you for your purchase!</p>
+            <h1>Payment confirmed</h1>
+            <p>Your BreadBreak order is in. We’ll start baking it next.</p>
         <?php elseif ($isCashOrder): ?>
-            <h1 style="color:var(--brown-900)">Order Placed! 🎉</h1>
-            <?php if (($order['fulfillment_type'] ?? '') === 'pickup'): ?>
-                <p>Your order is confirmed. Please <strong>bring your cash payment to our store</strong> when you come to pick up your order. Our staff will collect payment before releasing it.</p>
-            <?php else: ?>
-                <p>Your order is confirmed. Please <strong>prepare your cash payment</strong> — our rider will collect it upon delivery.</p>
-            <?php endif; ?>
+            <h1>Order placed</h1>
+            <p><?php echo $isPickupOrder
+                ? 'Bring cash when you pick up at the bakery.'
+                : 'Prepare cash — our rider will collect it on delivery.'; ?></p>
         <?php elseif (in_array($paymentStatus, ['failed', 'voided'], true)): ?>
-            <h1 style="color:var(--brown-900)">Payment Failed</h1>
-            <p>Unfortunately your payment was not completed. Please try placing a new order.</p>
+            <h1>Payment failed</h1>
+            <p>Your payment was not completed. Please try placing a new order.</p>
         <?php elseif ($paymentStatus === 'expired'): ?>
-            <h1 style="color:var(--brown-900)">Payment Expired</h1>
+            <h1>Payment expired</h1>
             <p>Your payment session has expired. Please try placing a new order.</p>
         <?php else: ?>
-            <h1 style="color:var(--brown-900)">Order Received</h1>
-            <p>We're waiting for payment confirmation from Xendit. This page will update automatically.</p>
+            <h1>Order received</h1>
+            <p>Waiting for payment confirmation. This page updates automatically.</p>
         <?php endif; ?>
     </div>
 
-    <!-- Order Card -->
     <div class="confirmation-card">
         <div class="confirmation-card-header">
-            <h2>
-                <i class="fa-solid fa-receipt" style="margin-right:.4rem;color:var(--accent)"></i>
-                Order #<?php echo htmlspecialchars($order['reference_id']); ?>
-            </h2>
-            <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
-                <?php echo orderStatusBadge($orderStatus); ?>
-                <?php echo paymentStatusBadge($paymentStatus); ?>
+            <div>
+                <p class="confirmation-kicker"><?php echo $isPickupOrder ? 'Store pickup' : 'Delivery order'; ?></p>
+                <h2>Order #<?php echo htmlspecialchars($order['reference_id']); ?></h2>
             </div>
+            <?php echo paymentStatusBadge($paymentStatus, $isCashOrder); ?>
         </div>
 
         <div class="confirmation-card-body">
-            <!-- Meta grid -->
-            <dl class="confirmation-meta">
-                <dt>Order Reference</dt>
-                <dd><?php echo htmlspecialchars($order['reference_id']); ?></dd>
+            <section class="confirmation-tracker-block">
+                <?php echo renderOrderStatusTracker($orderStatus, $fulfillmentType, 'large'); ?>
+                <div class="confirmation-tracker-copy">
+                    <strong><?php echo htmlspecialchars(orderStatusCustomerLabel($orderStatus, $fulfillmentType)); ?></strong>
+                    <p><?php echo htmlspecialchars(orderStatusCustomerMessage($orderStatus, $fulfillmentType)); ?></p>
+                </div>
+            </section>
 
-                <dt>Order Date</dt>
-                <dd><?php echo date('F j, Y g:i A', strtotime($order['created_at'])); ?></dd>
-
-                <dt>Payment Method</dt>
-                <dd>
-                    <?php
-                    $pmLabels = [
-                        'GCASH'     => ['GCash', '/BreadBreak/assets/images/payments/gcash.svg'],
-                        'PAYMAYA'   => ['Maya', '/BreadBreak/assets/images/payments/maya.svg'],
-                        'GRABPAY'   => ['GrabPay', '/BreadBreak/assets/images/payments/grabpay.svg'],
-                        'SHOPEEPAY' => ['ShopeePay', '/BreadBreak/assets/images/payments/shopeepay.svg'],
-                        'CARD'      => ['Credit / Debit Card', '/BreadBreak/assets/images/payments/card.svg'],
-                        'CASH'      => ['Cash on ' . (($order['fulfillment_type'] ?? 'delivery') === 'pickup' ? 'Pickup' : 'Delivery'), '/BreadBreak/assets/images/payments/cash.svg'],
-                    ];
-                    [$pmName, $pmLogo] = $pmLabels[$orderPayMethod] ?? [$orderPayMethod, ''];
-                    ?>
-                    <span style="display:inline-flex;align-items:center;gap:.5rem;font-weight:700;color:var(--brown-900);">
+            <div class="confirmation-facts">
+                <div>
+                    <span>Placed</span>
+                    <strong><?php echo date('M j, Y · g:i A', strtotime($order['created_at'])); ?></strong>
+                </div>
+                <div>
+                    <span>Payment</span>
+                    <strong class="confirmation-pay-method">
                         <?php if ($pmLogo): ?>
-                            <img src="<?php echo $pmLogo; ?>" alt="<?php echo htmlspecialchars($pmName); ?>" style="height:22px;max-width:70px;border-radius:4px;object-fit:contain;" />
+                            <img src="<?php echo $pmLogo; ?>" alt="" />
                         <?php endif; ?>
                         <?php echo htmlspecialchars($pmName); ?>
-                    </span>
-                </dd>
+                    </strong>
+                </div>
+                <div>
+                    <span><?php echo $isCashOrder ? 'To pay' : 'Paid'; ?></span>
+                    <strong class="confirmation-total">₱<?php echo number_format($orderTotal, 2); ?></strong>
+                </div>
+            </div>
 
-                <dt>Total Amount</dt>
-                <dd><strong style="color:var(--accent)">₱<?php echo number_format((float) $order['total_amount'], 2); ?></strong></dd>
-
-                <?php if ($isCashOrder && !empty($order['cash_amount'])): ?>
-                <dt style="grid-column:1/-1;margin-top:.3rem;border-top:1px solid var(--border);padding-top:.5rem;">
-                    <i class="fa-solid fa-coins" style="margin-right:.3rem;color:#b8860b;"></i>Cash Payment Details
-                </dt>
-                <dd style="grid-column:1/-1;">
-                    <div style="background:#fdfaf6;border:1.5px solid var(--border);border-radius:10px;padding:.75rem 1rem;display:grid;grid-template-columns:1fr 1fr;gap:.4rem .9rem;font-size:.9rem;">
-                        <span style="color:var(--muted);">Cash to Pay With:</span>
-                        <strong>₱<?php echo number_format((float) $order['cash_amount'], 2); ?></strong>
-                        <span style="color:var(--muted);">Your Change:</span>
-                        <strong style="color:#1a6645;">₱<?php echo number_format(max(0, (float)$order['cash_amount'] - (float)$order['total_amount']), 2); ?></strong>
+            <?php if ($isCashOrder && $cashAmount > 0): ?>
+            <aside class="cash-pay-card">
+                <div class="cash-pay-amounts">
+                    <div>
+                        <span>Prepare</span>
+                        <strong>₱<?php echo number_format($cashAmount, 2); ?></strong>
                     </div>
-                    <?php if (($order['fulfillment_type'] ?? 'delivery') === 'pickup'): ?>
-                    <div style="margin-top:.5rem;font-size:.82rem;padding:.5rem .75rem;background:#fff3e0;border:1px solid #f5c842;border-radius:8px;color:#7a4200;">
-                        <i class="fa-solid fa-store" style="margin-right:.3rem;"></i>
-                        <strong>Store Pickup:</strong> Please bring ₱<?php echo number_format((float)$order['cash_amount'], 2); ?> when you visit our store. Pay at the counter before claiming your order.
+                    <div>
+                        <span>Change</span>
+                        <strong>₱<?php echo number_format($cashChange, 2); ?></strong>
                     </div>
+                </div>
+                <p>
+                    <?php if ($isPickupOrder): ?>
+                        Bring this amount to Estrella Village. Staff will collect payment before releasing your order.
                     <?php else: ?>
-                    <div style="margin-top:.5rem;font-size:.82rem;padding:.5rem .75rem;background:#e8f7ef;border:1px solid #a3d9bc;border-radius:8px;color:#1a6645;">
-                        <i class="fa-solid fa-truck" style="margin-right:.3rem;"></i>
-                        <strong>Delivery:</strong> Please prepare ₱<?php echo number_format((float)$order['cash_amount'], 2); ?>. Our rider will collect it and give you ₱<?php echo number_format(max(0,(float)$order['cash_amount']-(float)$order['total_amount']),2); ?> change.
-                    </div>
+                        Have ₱<?php echo number_format($cashAmount, 2); ?> ready. The rider will return ₱<?php echo number_format($cashChange, 2); ?>.
                     <?php endif; ?>
-                </dd>
-                <?php endif; ?>
-                <dt>Fulfillment</dt>
-                <dd>
-                    <?php if (($order['fulfillment_type'] ?? 'delivery') === 'pickup'): ?>
-                        <span style="background:#e8f7ef;color:#1a6645;border:1px solid #a3d9bc;padding:.15rem .6rem;border-radius:100px;font-weight:700;font-size:.82rem;">
-                            <i class="fa-solid fa-store"></i> Store Pickup (Free)
-                        </span>
-                    <?php else: ?>
-                        <span style="background:#fff3e0;color:#b85c00;border:1px solid #f5c842;padding:.15rem .6rem;border-radius:100px;font-weight:700;font-size:.82rem;">
-                            <i class="fa-solid fa-truck"></i> Delivery
-                        </span>
-                    <?php endif; ?>
-                </dd>
+                </p>
+            </aside>
+            <?php endif; ?>
 
-                <?php if (!empty($order['discount_type']) && $order['discount_type'] !== 'none'): ?>
-                <dt style="grid-column:1/-1;margin-top:.3rem;border-top:1px solid var(--border);padding-top:.5rem;">
-                    <i class="fa-solid fa-id-card" style="margin-right:.3rem;color:var(--accent);"></i>Applied Discount
-                </dt>
-                <dd style="grid-column:1/-1;">
-                    <span style="background:#e8f7ef;color:#1a6645;border:1px solid #a3d9bc;padding:.2rem .6rem;border-radius:100px;font-weight:700;font-size:.82rem;">
-                        <?php echo $order['discount_type'] === 'senior' ? '🧓 Senior Citizen (20% Off + VAT Exempt)' : '♿ PWD (20% Off + VAT Exempt)'; ?>
-                    </span>
-                    <span style="font-size:.85rem;color:var(--muted);margin-left:.5rem;">
-                        ID: <strong><?php echo htmlspecialchars($order['discount_id_number'] ?? '—'); ?></strong> (<?php echo htmlspecialchars($order['discount_name'] ?? '—'); ?>)
-                    </span>
-                </dd>
-                <?php endif; ?>
+            <?php if (!empty($order['discount_type']) && $order['discount_type'] !== 'none'): ?>
+            <p class="confirmation-discount-note">
+                <?php echo $order['discount_type'] === 'senior' ? 'Senior Citizen discount (20% off + VAT exempt)' : 'PWD discount (20% off + VAT exempt)'; ?>
+                · ID <?php echo htmlspecialchars($order['discount_id_number'] ?? '—'); ?>
+                (<?php echo htmlspecialchars($order['discount_name'] ?? '—'); ?>)
+            </p>
+            <?php endif; ?>
 
-                <?php if (($order['fulfillment_type'] ?? 'delivery') === 'pickup'): ?>
-                <dt style="grid-column:1/-1;margin-top:.3rem;border-top:1px solid var(--border);padding-top:.5rem;">
-                    <i class="fa-solid fa-store" style="margin-right:.3rem;color:var(--accent);"></i>Pickup Location
-                </dt>
-                <dd style="grid-column:1/-1;">
-                    <strong>BreadBreak Bakery — Estrella Village Branch</strong><br>
-                    <span style="color:var(--muted);">Estrella Village, Guiguinto, Bulacan</span><br>
-                    <small style="color:var(--muted);"><i class="fa-solid fa-clock" style="margin-right:.25rem;color:var(--accent);"></i>7:00 AM – 8:00 PM · Ready in 30–45 mins</small>
+            <?php if ($isPickupOrder): ?>
+            <section class="confirmation-place">
+                <div>
+                    <span>Pickup at</span>
+                    <strong>BreadBreak Bakery — Estrella Village</strong>
+                    <p>Estrella Village, Guiguinto, Bulacan · 7:00 AM – 8:00 PM</p>
+                </div>
+                <a href="https://www.google.com/maps/search/?api=1&query=Bread+Break+Estrella+Village+Guiguinto+Bulacan" target="_blank" rel="noopener noreferrer">Get directions</a>
+            </section>
+            <div class="confirmation-map">
+                <iframe
+                    src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3856.89935785534!2d120.86967517519058!3d14.830905485683221!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x339653f14f7970b1%3A0x6472797c39ec3f75!2sBread%20Break!5e0!3m2!1sen!2sph!4v1789883477934!5m2!1sen!2sph"
+                    width="100%"
+                    height="180"
+                    style="border:0;display:block;"
+                    allowfullscreen=""
+                    loading="lazy"
+                    referrerpolicy="strict-origin-when-cross-origin">
+                </iframe>
+            </div>
+            <?php elseif (!empty($order['delivery_address'])): ?>
+            <section class="confirmation-place">
+                <div>
+                    <span>Deliver to</span>
+                    <strong><?php echo nl2br(htmlspecialchars($order['delivery_address'])); ?></strong>
+                </div>
+            </section>
+            <?php endif; ?>
 
-                    <div style="margin-top:.8rem;border-radius:12px;overflow:hidden;border:1.5px solid var(--border);max-width:100%;">
-                        <iframe 
-                            src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3856.89935785534!2d120.86967517519058!3d14.830905485683221!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x339653f14f7970b1%3A0x6472797c39ec3f75!2sBread%20Break!5e0!3m2!1sen!2sph!4v1789883477934!5m2!1sen!2sph" 
-                            width="100%" 
-                            height="240" 
-                            style="border:0;display:block;" 
-                            allowfullscreen="" 
-                            loading="lazy" 
-                            referrerpolicy="strict-origin-when-cross-origin">
-                        </iframe>
-                        <div style="padding:.5rem .8rem;background:#fff;border-top:1px solid var(--border);display:flex;justify-content:flex-end;">
-                            <a href="https://www.google.com/maps/search/?api=1&query=Bread+Break+Estrella+Village+Guiguinto+Bulacan" target="_blank" rel="noopener noreferrer" style="font-weight:700;color:var(--accent);text-decoration:none;font-size:.82rem;">
-                                <i class="fa-solid fa-diamond-turn-right" style="margin-right:.25rem;"></i>Open in Google Maps / Get Directions
-                            </a>
+            <?php
+            $itemsSum = 0.0;
+            foreach ($orderItems as $item) {
+                $itemsSum += (float) $item['line_total'];
+            }
+            ?>
+            <h3 class="confirmation-items-title">Your items</h3>
+            <ul class="confirmation-item-list">
+                <?php foreach ($orderItems as $item): ?>
+                    <li>
+                        <div>
+                            <strong><?php echo htmlspecialchars($item['product_name']); ?></strong>
+                            <span><?php echo htmlspecialchars($item['service_size']); ?> · Qty <?php echo (int) $item['quantity']; ?></span>
                         </div>
-                    </div>
-                </dd>
-                <?php elseif (!empty($order['delivery_address'])): ?>
-                <dt style="grid-column:1/-1;margin-top:.3rem;border-top:1px solid var(--border);padding-top:.5rem;">
-                    <i class="fa-solid fa-location-dot" style="margin-right:.3rem;color:var(--accent);"></i>Delivery Address
-                </dt>
-                <dd style="grid-column:1/-1;"><?php echo nl2br(htmlspecialchars($order['delivery_address'])); ?></dd>
-                <?php endif; ?>
-            </dl>
-
-            <!-- Order items table -->
-            <table class="order-table" style="margin-top:.5rem;">
-                <thead>
-                    <tr>
-                        <th>Product</th>
-                        <th>Service Size</th>
-                        <th>SKU</th>
-                        <th class="text-right">Qty</th>
-                        <th class="text-right">Unit Price</th>
-                        <th class="text-right">Subtotal</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php 
-                $itemsSum = 0.0;
-                foreach ($orderItems as $item): 
-                    $itemsSum += (float) $item['line_total'];
-                ?>
-                    <tr>
-                        <td class="item-name"><?php echo htmlspecialchars($item['product_name']); ?></td>
-                        <td><?php echo htmlspecialchars($item['service_size']); ?></td>
-                        <td class="item-meta"><?php echo htmlspecialchars($item['sku']); ?></td>
-                        <td class="text-right"><?php echo (int) $item['quantity']; ?></td>
-                        <td class="text-right price-cell">₱<?php echo number_format((float) $item['unit_price'], 2); ?></td>
-                        <td class="text-right price-cell">₱<?php echo number_format((float) $item['line_total'], 2); ?></td>
-                    </tr>
+                        <em>₱<?php echo number_format((float) $item['line_total'], 2); ?></em>
+                    </li>
                 <?php endforeach; ?>
-
-                    <!-- Items Subtotal -->
-                    <tr style="border-top:2px solid var(--border);">
-                        <td colspan="5" class="text-right" style="color:var(--muted);font-size:.9rem;">Subtotal (VAT-Inc)</td>
-                        <td class="text-right price-cell">₱<?php echo number_format($itemsSum, 2); ?></td>
-                    </tr>
-
-                    <?php if (!empty($order['discount_type']) && $order['discount_type'] !== 'none'): 
-                        $vatExemptAmount = $itemsSum - ((float) $order['vat_exempt_sales']);
-                    ?>
-                    <!-- Senior / PWD Discounts -->
-                    <tr style="color:#1a6645;">
-                        <td colspan="5" class="text-right" style="font-size:.88rem;">
-                            <i class="fa-solid fa-percent" style="margin-right:.3rem;"></i>Less: 12% VAT Exemption
-                        </td>
-                        <td class="text-right price-cell" style="color:#1a6645;">-₱<?php echo number_format($vatExemptAmount, 2); ?></td>
-                    </tr>
-                    <tr style="color:#1a6645;">
-                        <td colspan="5" class="text-right" style="font-size:.88rem;">
-                            <i class="fa-solid fa-tag" style="margin-right:.3rem;"></i>Less: 20% <?php echo strtoupper($order['discount_type']); ?> Discount
-                        </td>
-                        <td class="text-right price-cell" style="color:#1a6645;">-₱<?php echo number_format((float) $order['discount_amount'], 2); ?></td>
-                    </tr>
-                    <?php else: ?>
-                    <!-- Regular VAT Breakdown -->
-                    <tr style="font-size:.82rem;color:var(--muted);">
-                        <td colspan="5" class="text-right">VATable Sales</td>
-                        <td class="text-right price-cell" style="font-size:.82rem;color:var(--muted);">₱<?php echo number_format((float) ($order['vatable_sales'] ?: ($itemsSum / 1.12)), 2); ?></td>
-                    </tr>
-                    <tr style="font-size:.82rem;color:var(--muted);">
-                        <td colspan="5" class="text-right">12% VAT (Included)</td>
-                        <td class="text-right price-cell" style="font-size:.82rem;color:var(--muted);">₱<?php echo number_format((float) ($order['vat_amount'] ?: ($itemsSum - ($itemsSum / 1.12))), 2); ?></td>
-                    </tr>
-                    <?php endif; ?>
-
-                    <?php if ((float)($order['delivery_fee'] ?? 0) > 0): ?>
-                    <tr>
-                        <td colspan="5" class="text-right" style="color:var(--muted);font-size:.9rem;">
-                            <i class="fa-solid fa-truck" style="margin-right:.3rem;"></i>Delivery Fee
-                        </td>
-                        <td class="text-right price-cell">₱<?php echo number_format((float) $order['delivery_fee'], 2); ?></td>
-                    </tr>
-                    <?php endif; ?>
-
-                    <!-- Grand Total -->
-                    <tr style="border-top:2px solid var(--border);">
-                        <td colspan="5" class="text-right" style="font-weight:700;color:var(--brown-900);padding-top:1rem;font-size:1rem;">
-                            <?php echo $isCashOrder ? 'Total to Pay' : 'Total Amount Paid'; ?>
-                        </td>
-                        <td class="text-right price-cell" style="font-size:1.2rem;padding-top:1rem;">
-                            ₱<?php echo number_format((float) $order['total_amount'], 2); ?>
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
+            </ul>
+            <dl class="confirmation-totals">
+                <div>
+                    <dt>Subtotal</dt>
+                    <dd>₱<?php echo number_format($itemsSum, 2); ?></dd>
+                </div>
+                <?php if (!empty($order['discount_type']) && $order['discount_type'] !== 'none'):
+                    $vatExemptAmount = $itemsSum - ((float) $order['vat_exempt_sales']);
+                ?>
+                <div>
+                    <dt>VAT exemption</dt>
+                    <dd>-₱<?php echo number_format($vatExemptAmount, 2); ?></dd>
+                </div>
+                <div>
+                    <dt>20% <?php echo strtoupper($order['discount_type']); ?> discount</dt>
+                    <dd>-₱<?php echo number_format((float) $order['discount_amount'], 2); ?></dd>
+                </div>
+                <?php endif; ?>
+                <?php if ((float)($order['delivery_fee'] ?? 0) > 0): ?>
+                <div>
+                    <dt>Delivery fee</dt>
+                    <dd>₱<?php echo number_format((float) $order['delivery_fee'], 2); ?></dd>
+                </div>
+                <?php endif; ?>
+                <div class="is-total">
+                    <dt><?php echo $isCashOrder ? 'Total to pay' : 'Total paid'; ?></dt>
+                    <dd>₱<?php echo number_format((float) $order['total_amount'], 2); ?></dd>
+                </div>
+            </dl>
 
             <?php if (!$isTerminal): ?>
             <div class="confirmation-refresh-note">
-                <i class="fa-solid fa-rotate" style="color:var(--accent)"></i>
-                <span>This page automatically refreshes every 5 seconds until your payment is confirmed by Xendit.</span>
+                <i class="fa-solid fa-rotate"></i>
+                <span>This page refreshes every 5 seconds until Xendit confirms your payment.</span>
             </div>
             <?php endif; ?>
         </div>
 
         <div class="confirmation-actions">
             <a href="/BreadBreak/customer/menu_dashboard.php" class="btn btn-primary">
-                <i class="fa-solid fa-house" style="margin-right:.4rem;"></i> Return to Menu
+                <i class="fa-solid fa-house"></i> Return to Menu
+            </a>
+            <a href="<?php echo htmlspecialchars($orderStatusUrl); ?>" class="btn btn-outline">
+                <i class="fa-solid fa-bread-slice"></i> View Order Status
             </a>
             <?php if (!$isTerminal): ?>
             <a href="<?php echo htmlspecialchars($_SERVER['REQUEST_URI']); ?>" class="btn btn-outline">
-                <i class="fa-solid fa-rotate" style="margin-right:.4rem;"></i> Refresh Now
+                <i class="fa-solid fa-rotate"></i> Refresh Now
             </a>
             <?php endif; ?>
         </div>
@@ -400,6 +341,4 @@ $pageTitle = 'Order Confirmation | BreadBreak';
 </main>
 
 <?php include __DIR__ . '/includes/footer.php'; ?>
-</body>
-</html>
 

@@ -24,8 +24,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 // ── Parse JSON body ───────────────────────────────────────────────────────────
 $body    = json_decode(file_get_contents('php://input'), true);
 $address = trim((string) ($body['address'] ?? ''));
+$reqLat  = $body['lat'] ?? null;
+$reqLng  = $body['lng'] ?? null;
 
-if ($address === '') {
+if ($address === '' && ($reqLat === null || $reqLng === null)) {
     http_response_code(400);
     echo json_encode(['error' => 'Address is required']);
     exit;
@@ -61,6 +63,23 @@ function assignZone(array $zones, float $km): ?array {
         }
     }
     return null; // out of zone
+}
+
+function haversineKm(float $lat1, float $lon1, float $lat2, float $lon2): float {
+    $earthKm = 6371.0;
+    $dLat = deg2rad($lat2 - $lat1);
+    $dLon = deg2rad($lon2 - $lon1);
+    $a = sin($dLat / 2) ** 2
+        + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLon / 2) ** 2;
+    return $earthKm * 2 * atan2(sqrt($a), sqrt(1 - $a));
+}
+
+function maxZoneKm(array $zones): float {
+    $maxKm = 0.0;
+    foreach ($zones as $zone) {
+        $maxKm = max($maxKm, (float) ($zone['max_km'] ?? 0));
+    }
+    return $maxKm > 0 ? $maxKm : 8.0;
 }
 
 // =============================================================================
@@ -253,6 +272,35 @@ function checkFull(PDO $pdo, string $address, array $zones, float $branchLat, fl
 // =============================================================================
 // Dispatch
 // =============================================================================
+if (is_numeric($reqLat) && is_numeric($reqLng)) {
+    $pinKm = round(haversineKm($branchLat, $branchLng, (float) $reqLat, (float) $reqLng), 2);
+    $maxKm = maxZoneKm($zones);
+    if ($pinKm > $maxKm) {
+        echo json_encode([
+            'allowed'      => false,
+            'zone'         => null,
+            'delivery_fee' => null,
+            'min_order'    => null,
+            'distance_km'  => $pinKm,
+            'message'      => "Sorry, we don't deliver to your area yet. BreadBreak delivers within {$maxKm}km of our branch in Estrella Village, Guiguinto.",
+            'mode_used'    => 'pin_distance',
+        ]);
+        exit;
+    }
+
+    $zone = assignZone($zones, $pinKm) ?: ($zones[0] ?? ['name' => 'zone_1', 'fee' => 50, 'min_order' => 0]);
+    echo json_encode([
+        'allowed'      => true,
+        'zone'         => $zone['name'] ?? 'zone_1',
+        'delivery_fee' => (int) ($zone['fee'] ?? 50),
+        'min_order'    => (int) ($zone['min_order'] ?? 0),
+        'distance_km'  => $pinKm,
+        'message'      => 'Within ' . rtrim(rtrim(number_format($maxKm, 1), '0'), '.') . 'km delivery zone.',
+        'mode_used'    => 'pin_distance',
+    ]);
+    exit;
+}
+
 if ($mode === 'full') {
     $result = checkFull($pdo, $address, $zones, $branchLat, $branchLng, $maxDriveTime);
     // If full mode fails geocode, also try simple as extra fallback message hint

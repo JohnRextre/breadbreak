@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/auth.php';
 requireRole('admin');
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/rider.php';
 
 function adminTableExists(PDO $pdo, string $table): bool
 {
@@ -11,7 +12,8 @@ function adminTableExists(PDO $pdo, string $table): bool
 }
 
 $pdo = getDatabaseConnection();
-$userCounts = $pdo->query("SELECT COUNT(*) AS total, SUM(role = 'customer') AS customers, SUM(role = 'staff') AS staff FROM users")->fetch();
+ensureRiderSupport($pdo);
+$userCounts = $pdo->query("SELECT COUNT(*) AS total, SUM(role = 'customer') AS customers, SUM(role = 'staff') AS staff, SUM(role = 'rider') AS riders FROM users")->fetch();
 $totalProducts = 0;
 $totalStockUnits = 0;
 $lowStock = 0;
@@ -52,6 +54,7 @@ require __DIR__ . '/../includes/admin_header.php';
     <article class="summary-card"><div class="summary-top"><span>TOTAL USERS</span><span class="summary-icon"><i class="fa-solid fa-users"></i></span></div><div class="summary-value"><?php echo (int) ($userCounts['total'] ?? 0); ?></div></article>
     <article class="summary-card"><div class="summary-top"><span>TOTAL CUSTOMERS</span><span class="summary-icon"><i class="fa-solid fa-user-group"></i></span></div><div class="summary-value"><?php echo (int) ($userCounts['customers'] ?? 0); ?></div></article>
     <article class="summary-card"><div class="summary-top"><span>TOTAL STAFF</span><span class="summary-icon"><i class="fa-solid fa-user-tie"></i></span></div><div class="summary-value"><?php echo (int) ($userCounts['staff'] ?? 0); ?></div></article>
+    <article class="summary-card"><div class="summary-top"><span>TOTAL RIDERS</span><span class="summary-icon"><i class="fa-solid fa-bicycle"></i></span></div><div class="summary-value"><?php echo (int) ($userCounts['riders'] ?? 0); ?></div></article>
     <article class="summary-card"><div class="summary-top"><span>INVENTORY ITEMS</span><span class="summary-icon"><i class="fa-solid fa-bread-slice"></i></span></div><div class="summary-value"><?php echo $totalProducts; ?></div></article>
     <article class="summary-card"><div class="summary-top"><span>TOTAL ORDERS</span><span class="summary-icon"><i class="fa-solid fa-receipt"></i></span></div><div class="summary-value"><?php echo $totalOrders; ?></div></article>
 </section>

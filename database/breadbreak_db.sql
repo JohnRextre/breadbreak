@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     password VARCHAR(255) NOT NULL,
     profile_data MEDIUMBLOB NULL,
     profile_mime VARCHAR(50) NULL,
-    role ENUM('admin', 'staff', 'customer') NOT NULL,
+    role ENUM('admin', 'staff', 'rider', 'customer') NOT NULL,
     status ENUM('active', 'inactive') DEFAULT 'active',
     status_reason VARCHAR(255) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS customer_cart (
 CREATE TABLE IF NOT EXISTS orders (
     id INT PRIMARY KEY AUTO_INCREMENT,
     customer_id INT NOT NULL,
+    rider_id INT NULL,
     reference_id VARCHAR(32) NOT NULL UNIQUE,
     status ENUM('pending', 'processing', 'completed', 'cancelled') NOT NULL DEFAULT 'pending',
     fulfillment_type ENUM('delivery', 'pickup') NOT NULL DEFAULT 'delivery',
@@ -118,7 +119,8 @@ CREATE TABLE IF NOT EXISTS orders (
     notes TEXT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    CONSTRAINT fk_order_customer FOREIGN KEY (customer_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE RESTRICT
+    CONSTRAINT fk_order_customer FOREIGN KEY (customer_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT fk_order_rider FOREIGN KEY (rider_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE SET NULL
 );
 
 -- =============================================================================
@@ -206,3 +208,15 @@ CREATE TABLE IF NOT EXISTS delivery_zone_logs (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_zone_logs_order (order_id)
 );
+
+CREATE TABLE IF NOT EXISTS delivery_messages (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    order_id INT NOT NULL,
+    sender_id INT NOT NULL,
+    sender_role ENUM('rider', 'customer') NOT NULL,
+    body VARCHAR(500) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_delivery_msg_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+    CONSTRAINT fk_delivery_msg_sender FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_delivery_msg_order_created (order_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

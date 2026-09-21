@@ -97,6 +97,27 @@ function getDeliverySetting(PDO $pdo, string $key, string $default = ''): string
 $deliveryMode  = getDeliverySetting($pdo, 'delivery_mode', 'simple');
 $inRangeAreas  = json_decode(getDeliverySetting($pdo, 'in_range_areas', '[]'), true) ?: [];
 $deliveryZones = json_decode(getDeliverySetting($pdo, 'delivery_zones', '[]'), true) ?: [];
+$branchLat     = (float) getDeliverySetting($pdo, 'branch_lat', '14.830905');
+$branchLng     = (float) getDeliverySetting($pdo, 'branch_lng', '120.869675');
+
+function deliveryHaversineKm(float $lat1, float $lon1, float $lat2, float $lon2): float {
+    $earthKm = 6371.0;
+    $dLat = deg2rad($lat2 - $lat1);
+    $dLon = deg2rad($lon2 - $lon1);
+    $a = sin($dLat / 2) ** 2
+        + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLon / 2) ** 2;
+    return $earthKm * 2 * atan2(sqrt($a), sqrt(1 - $a));
+}
+
+function maxDeliveryKmFromZones(array $zones): float {
+    $maxKm = 0.0;
+    foreach ($zones as $zone) {
+        $maxKm = max($maxKm, (float) ($zone['max_km'] ?? 0));
+    }
+    return $maxKm > 0 ? $maxKm : 8.0;
+}
+
+$maxDeliveryKm = maxDeliveryKmFromZones($deliveryZones);
 
 function serverCheckDelivery(string $address, string $mode, array $inAreas, array $zones): array {
     if ($mode === 'simple') {
@@ -136,7 +157,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
             $checkoutError = 'Please select or enter your delivery address.';
         }
 
+        $pinValidated = false;
         if (!$checkoutError) {
+            $postedLat = trim((string) ($_POST['delivery_lat'] ?? ''));
+            $postedLng = trim((string) ($_POST['delivery_lng'] ?? ''));
+            if ($postedLat !== '' && $postedLng !== '' && is_numeric($postedLat) && is_numeric($postedLng)) {
+                $pinKm = deliveryHaversineKm($branchLat, $branchLng, (float) $postedLat, (float) $postedLng);
+                if ($pinKm > $maxDeliveryKm) {
+                    $checkoutError = "Sorry, we don't deliver to your area yet. BreadBreak delivers within {$maxDeliveryKm}km of our branch in Estrella Village, Guiguinto.";
+                } else {
+                    $pinValidated = true;
+                    $matchedFee = 50.0;
+                    $sortedZones = $deliveryZones;
+                    usort($sortedZones, static fn($a, $b) => ((float) ($a['max_km'] ?? 0)) <=> ((float) ($b['max_km'] ?? 0)));
+                    foreach ($sortedZones as $zone) {
+                        if ($pinKm <= (float) ($zone['max_km'] ?? 0)) {
+                            $matchedFee = (float) ($zone['fee'] ?? 50);
+                            break;
+                        }
+                    }
+                    $deliveryFeePost = $matchedFee;
+                }
+            }
+        }
+
+        if (!$checkoutError && !$pinValidated) {
             $zoneCheck = serverCheckDelivery($deliveryAddress, $deliveryMode, $inRangeAreas, $deliveryZones);
             if (!$zoneCheck['allowed']) {
                 $checkoutError = "Sorry, we don't deliver to your area yet. BreadBreak delivers within 8km of our branch in Estrella Village, Guiguinto.";
@@ -437,6 +482,8 @@ $pageTitle = 'Checkout | BreadBreak';
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <link rel="stylesheet" href="/BreadBreak/assets/css/style.css" />
     <link rel="stylesheet" href="/BreadBreak/assets/css/checkout.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
 <?php include __DIR__ . '/includes/header.php'; ?>
@@ -549,6 +596,27 @@ $pageTitle = 'Checkout | BreadBreak';
                 }
                 ?>
 
+                <?php
+                $checkoutMapPickerHtml = '
+                    <div class="checkout-map-picker">
+                        <div class="checkout-map-picker-head">
+                            <div>
+                                <strong><i class="fa-solid fa-map-location-dot"></i> Pin Your Location on Map</strong>
+                                <p>Click on the map or drag the pin to auto-fill your address. Green circle is our 8km delivery zone.</p>
+                            </div>
+                            <button type="button" id="checkout-btn-locate-me" class="addr-btn addr-btn-default">
+                                <i class="fa-solid fa-crosshairs"></i> Use My GPS Location
+                            </button>
+                        </div>
+                        <div id="checkout-address-map"></div>
+                        <div class="checkout-map-picker-foot">
+                            <span id="checkout-map-zone-status"><i class="fa-solid fa-circle-info"></i> Click anywhere on map to set your pin</span>
+                            <span id="checkout-map-distance-km"></span>
+                        </div>
+                    </div>
+                ';
+                ?>
+
                 <?php if ($hasSavedAddresses): ?>
                     <p style="font-size:.88rem;color:var(--muted);margin:0 0 1rem;">Select your delivery address or use a different one below.</p>
                     <div class="saved-address-list" id="saved-address-list">
@@ -602,12 +670,14 @@ $pageTitle = 'Checkout | BreadBreak';
                             <i class="fa-solid fa-plus" style="margin-right:.4rem;"></i> Use a different address
                         </button>
                         <div id="other-addr-wrap" style="display:none;margin-top:.85rem;">
+                            <?php echo $checkoutMapPickerHtml; ?>
                             <label class="delivery-address-label" for="delivery-address-input">
                                 One-time Delivery Address <span style="color:#c00;">*</span>
                             </label>
                             <textarea id="delivery-address-input" name="delivery_address_display" class="delivery-address-textarea" rows="3"
                                 placeholder="e.g. Blk 5 Lot 3, Ilang-Ilang, Guiguinto, Bulacan, 3015"
                             ></textarea>
+                            <p class="checkout-map-edit-hint">You can edit the auto-filled address if a house number or landmark is missing.</p>
                             <div id="zone-check-result" class="zone-check-result" aria-live="polite" style="display:none;"></div>
                         </div>
                     </div>
@@ -619,9 +689,10 @@ $pageTitle = 'Checkout | BreadBreak';
 
                 <?php else: ?>
                     <p style="font-size:.88rem;color:var(--muted);margin:0 0 1rem;">
-                        Enter your full delivery address. We deliver within 8km of our branch in Estrella Village, Guiguinto, Bulacan.
+                        Pin your location or enter your full delivery address. We deliver within 8km of our branch in Estrella Village, Guiguinto, Bulacan.
                         <a href="/BreadBreak/customer/account.php" style="color:var(--accent);white-space:nowrap;"><i class="fa-solid fa-location-dot" style="margin-right:.2rem;"></i>Save addresses</a> in My Account.
                     </p>
+                    <?php echo $checkoutMapPickerHtml; ?>
                     <label class="delivery-address-label" for="delivery-address-input">
                         Delivery Address <span style="color:#c00;">*</span>
                     </label>
@@ -629,11 +700,8 @@ $pageTitle = 'Checkout | BreadBreak';
                         placeholder="e.g. Blk 5 Lot 3, Ilang-Ilang, Guiguinto, Bulacan, 3015"
                         required
                     ><?php echo htmlspecialchars($_POST['delivery_address'] ?? ''); ?></textarea>
+                    <p class="checkout-map-edit-hint">You can edit the auto-filled address if a house number or landmark is missing.</p>
                     <div id="zone-check-result" class="zone-check-result" aria-live="polite" style="display:none;"></div>
-                    <p style="font-size:.8rem;color:var(--muted);margin-top:.6rem;">
-                        <i class="fa-solid fa-circle-info" style="margin-right:.3rem;"></i>
-                        We'll check if your address is within our delivery zone.
-                    </p>
                 <?php endif; ?>
 
                 </div>
@@ -748,8 +816,8 @@ $pageTitle = 'Checkout | BreadBreak';
                         <label class="pay-method-card is-selected" data-method="GCASH">
                             <input type="radio" name="pay_method_radio" value="GCASH" checked hidden />
                             <div class="pay-radio-circle"></div>
-                            <div class="pay-logo-box">
-                                <img src="/BreadBreak/assets/images/payments/gcash.svg" alt="GCash" class="pay-brand-img" />
+                            <div class="pay-logo-box pay-logo-gcash">
+                                <img src="/BreadBreak/assets/images/payments/GCash-Emblem.png" alt="GCash" class="pay-brand-img" />
                             </div>
                             <div class="pay-card-details">
                                 <div class="pay-card-name">GCash</div>
@@ -762,8 +830,8 @@ $pageTitle = 'Checkout | BreadBreak';
                         <label class="pay-method-card" data-method="PAYMAYA">
                             <input type="radio" name="pay_method_radio" value="PAYMAYA" hidden />
                             <div class="pay-radio-circle"></div>
-                            <div class="pay-logo-box">
-                                <img src="/BreadBreak/assets/images/payments/maya.svg" alt="Maya" class="pay-brand-img" />
+                            <div class="pay-logo-box pay-logo-maya">
+                                <img src="/BreadBreak/assets/images/payments/maya-emblem.png" alt="Maya" class="pay-brand-img" />
                             </div>
                             <div class="pay-card-details">
                                 <div class="pay-card-name">Maya</div>
@@ -775,8 +843,8 @@ $pageTitle = 'Checkout | BreadBreak';
                         <label class="pay-method-card" data-method="GRABPAY">
                             <input type="radio" name="pay_method_radio" value="GRABPAY" hidden />
                             <div class="pay-radio-circle"></div>
-                            <div class="pay-logo-box">
-                                <img src="/BreadBreak/assets/images/payments/grabpay.svg" alt="GrabPay" class="pay-brand-img" />
+                            <div class="pay-logo-box pay-logo-grabpay">
+                                <img src="/BreadBreak/assets/images/payments/grabpay-emblem.png" alt="GrabPay" class="pay-brand-img" />
                             </div>
                             <div class="pay-card-details">
                                 <div class="pay-card-name">GrabPay</div>
@@ -788,8 +856,8 @@ $pageTitle = 'Checkout | BreadBreak';
                         <label class="pay-method-card" data-method="SHOPEEPAY">
                             <input type="radio" name="pay_method_radio" value="SHOPEEPAY" hidden />
                             <div class="pay-radio-circle"></div>
-                            <div class="pay-logo-box">
-                                <img src="/BreadBreak/assets/images/payments/shopeepay.svg" alt="ShopeePay" class="pay-brand-img" />
+                            <div class="pay-logo-box pay-logo-shopeepay">
+                                <img src="/BreadBreak/assets/images/payments/Shopeepay-emblem.png" alt="ShopeePay" class="pay-brand-img" />
                             </div>
                             <div class="pay-card-details">
                                 <div class="pay-card-name">ShopeePay</div>
@@ -801,7 +869,7 @@ $pageTitle = 'Checkout | BreadBreak';
                         <label class="pay-method-card" data-method="CARD">
                             <input type="radio" name="pay_method_radio" value="CARD" hidden />
                             <div class="pay-radio-circle"></div>
-                            <div class="pay-logo-box">
+                            <div class="pay-logo-box pay-logo-card">
                                 <img src="/BreadBreak/assets/images/payments/card.svg" alt="Credit / Debit Card" class="pay-brand-img" />
                             </div>
                             <div class="pay-card-details">
@@ -814,8 +882,8 @@ $pageTitle = 'Checkout | BreadBreak';
                         <label class="pay-method-card" data-method="CASH">
                             <input type="radio" name="pay_method_radio" value="CASH" hidden />
                             <div class="pay-radio-circle"></div>
-                            <div class="pay-logo-box">
-                                <img src="/BreadBreak/assets/images/payments/cash.svg" alt="Cash" class="pay-brand-img" />
+                            <div class="pay-logo-box pay-logo-cash">
+                                <img src="/BreadBreak/assets/images/payments/P-Cash-emblem.png" alt="Cash" class="pay-brand-img" />
                             </div>
                             <div class="pay-card-details">
                                 <div class="pay-card-name" id="cash-card-title">Cash on Delivery</div>
@@ -953,6 +1021,8 @@ $pageTitle = 'Checkout | BreadBreak';
                     <input type="hidden" name="fulfillment_type" id="hidden-fulfillment-type" value="delivery" />
                     <input type="hidden" name="delivery_address" id="hidden-delivery-address" value="" />
                     <input type="hidden" name="delivery_fee" id="hidden-delivery-fee" value="0" />
+                    <input type="hidden" name="delivery_lat" id="hidden-delivery-lat" value="" />
+                    <input type="hidden" name="delivery_lng" id="hidden-delivery-lng" value="" />
 
                     <!-- Hidden discount fields -->
                     <input type="hidden" name="apply_discount" id="hidden-apply-discount" value="0" />
@@ -994,10 +1064,29 @@ $pageTitle = 'Checkout | BreadBreak';
     const hiddenFulfill   = document.getElementById('hidden-fulfillment-type');
     const hiddenAddr      = document.getElementById('hidden-delivery-address');
     const hiddenFee       = document.getElementById('hidden-delivery-fee');
+    const hiddenLat       = document.getElementById('hidden-delivery-lat');
+    const hiddenLng       = document.getElementById('hidden-delivery-lng');
+    const checkoutForm    = document.getElementById('checkout-form');
     const feeDisplay      = document.getElementById('summary-delivery-fee');
     const feeLabel        = document.getElementById('summary-delivery-label');
     const grandTotalEl    = document.getElementById('summary-grand-total');
     const cartSubtotal    = <?php echo json_encode($cartTotal); ?>;
+    const STORE_LAT       = <?php echo json_encode($branchLat); ?>;
+    const STORE_LNG       = <?php echo json_encode($branchLng); ?>;
+    const MAX_DELIVERY_KM = <?php echo json_encode($maxDeliveryKm); ?>;
+    let checkoutPinKm     = null;
+
+    function clearDeliveryPin() {
+        checkoutPinKm = null;
+        if (hiddenLat) hiddenLat.value = '';
+        if (hiddenLng) hiddenLng.value = '';
+    }
+
+    function setDeliveryPin(lat, lng, distKm) {
+        checkoutPinKm = distKm;
+        if (hiddenLat) hiddenLat.value = String(lat);
+        if (hiddenLng) hiddenLng.value = String(lng);
+    }
 
     // Fulfillment toggle elements
     const toggleDeliveryBtn = document.getElementById('toggle-delivery-btn');
@@ -1043,6 +1132,7 @@ $pageTitle = 'Checkout | BreadBreak';
     let checkTimer = null;
     let lastChecked = '';
     let usingOtherAddr = false;
+    let lastSavedRadio = null;
 
     // ── Helpers ───────────────────────────────────────────────────────────────
     function formatPHP(amount) {
@@ -1082,6 +1172,10 @@ $pageTitle = 'Checkout | BreadBreak';
         const fee = currentFulfillment === 'pickup' ? 0 : (currentDeliveryFee !== null ? currentDeliveryFee : 0);
         const totalToPay = netItemsTotal + fee;
         grandTotalEl.textContent = formatPHP(totalToPay);
+
+        if (typeof validateCashInput === 'function') {
+            validateCashInput();
+        }
     }
 
     function updateSummaryFee(fee) {
@@ -1158,7 +1252,12 @@ $pageTitle = 'Checkout | BreadBreak';
         if (currentFulfillment === 'pickup') {
             hiddenAddr.value = 'BreadBreak Bakery - Estrella Village, Guiguinto, Bulacan (Store Pickup)';
             hiddenFee.value  = 0;
+            clearDeliveryPin();
         } else {
+            if (checkoutPinKm != null && checkoutPinKm > MAX_DELIVERY_KM) {
+                setOrderButton(false, 'This pin is outside our ' + MAX_DELIVERY_KM + 'km delivery zone. Switch to Store Pickup to continue.');
+                return false;
+            }
             if (!hiddenAddr.value || hiddenAddr.value.trim() === '') {
                 setOrderButton(false, 'Please select or enter a delivery address.');
                 return false;
@@ -1345,24 +1444,231 @@ $pageTitle = 'Checkout | BreadBreak';
     }
 
     // ── Zone check API call ───────────────────────────────────────────────────
-    async function checkZone(address, onResult) {
+    async function checkZone(address, onResult, coords) {
         try {
+            const payload = { address };
+            if (coords && Number.isFinite(coords.lat) && Number.isFinite(coords.lng)) {
+                payload.lat = coords.lat;
+                payload.lng = coords.lng;
+            }
             const resp = await fetch('/BreadBreak/api/delivery/check-address.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ address }),
+                body: JSON.stringify(payload),
             });
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const data = await resp.json();
             onResult(data);
         } catch (err) {
+            if (checkoutPinKm != null && checkoutPinKm > MAX_DELIVERY_KM) {
+                onResult({ allowed: false, delivery_fee: 0, min_order: 0, message: 'Outside delivery zone.', _error: true });
+                return;
+            }
             onResult({ allowed: true, delivery_fee: 50, min_order: 0, message: 'Delivery available · ₱50 delivery fee', _error: true });
         }
+    }
+
+    // ── Checkout map picker (same Leaflet flow as My Addresses) ───────────────
+    let checkoutMap = null;
+    let checkoutPin = null;
+    let checkoutGeocodeTimer = null;
+
+    function haversineKm(lat1, lon1, lat2, lon2) {
+        const R = 6371;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                  Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+    }
+
+    function updateCheckoutMapStatus(distKm) {
+        const status = document.getElementById('checkout-map-zone-status');
+        const distBadge = document.getElementById('checkout-map-distance-km');
+        if (distBadge) distBadge.textContent = distKm.toFixed(2) + ' km away';
+        if (!status) return;
+        if (distKm <= MAX_DELIVERY_KM) {
+            status.innerHTML = '<span style="color:#1d7044;font-weight:700;"><i class="fa-solid fa-circle-check" style="color:#28a067;margin-right:.3rem;"></i>Within ' + MAX_DELIVERY_KM + 'km Delivery Zone (' + distKm.toFixed(1) + ' km)</span>';
+        } else {
+            status.innerHTML = '<span style="color:#c53030;font-weight:700;"><i class="fa-solid fa-circle-xmark" style="color:#e53e3e;margin-right:.3rem;"></i>Beyond ' + MAX_DELIVERY_KM + 'km Delivery Zone (' + distKm.toFixed(1) + ' km)</span>';
+        }
+    }
+
+    function showOutOfZoneCheckoutResult() {
+        hiddenAddr.value = '';
+        hiddenFee.value = 0;
+        updateSummaryFee(null);
+        if (resultBox) {
+            resultBox.style.display = 'flex';
+            resultBox.className = 'zone-check-result zone-blocked';
+            resultBox.innerHTML = '<i class="fa-solid fa-circle-xmark"></i><div style="flex:1;">' +
+                '<strong>Outside ' + MAX_DELIVERY_KM + 'km Delivery Zone</strong>' +
+                '<p style="margin:.25rem 0 .4rem;font-size:.82rem;">Delivery is not available for this location. Please pin a spot inside the green circle, or switch to <strong>Store Pickup (Free)</strong>.</p>' +
+                '<button type="button" class="addr-btn addr-btn-default switch-to-pickup-btn" style="font-size:.78rem;padding:.3rem .75rem;background:#fff;border:1.5px solid var(--accent);color:var(--accent);font-weight:700;cursor:pointer;border-radius:6px;display:inline-flex;align-items:center;gap:.35rem;"><i class="fa-solid fa-store"></i> Switch to Store Pickup (Free)</button>' +
+            '</div>';
+        }
+        setOrderButton(false, 'This pin is outside our ' + MAX_DELIVERY_KM + 'km delivery zone. Switch to Store Pickup to continue.');
+    }
+
+    async function reverseGeocodeCheckout(lat, lng) {
+        const status = document.getElementById('checkout-map-zone-status');
+        const distKm = haversineKm(STORE_LAT, STORE_LNG, lat, lng);
+        if (status && distKm <= MAX_DELIVERY_KM) {
+            status.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="color:var(--accent);margin-right:.3rem;"></i>Finding address details…';
+        }
+        try {
+            const resp = await fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + lat + '&lon=' + lng + '&zoom=18&addressdetails=1', {
+                headers: { 'Accept-Language': 'en' }
+            });
+            if (!resp.ok) throw new Error('geocode');
+            const data = await resp.json();
+            const addr = data.address || {};
+            const barangay = addr.quarter || addr.suburb || addr.neighbourhood || addr.village || addr.hamlet || '';
+            const city = addr.city || addr.town || addr.municipality || '';
+            const province = addr.province || addr.state || 'Bulacan';
+            const postal = addr.postcode || '';
+            const roadParts = [];
+            if (addr.house_number) roadParts.push(addr.house_number);
+            if (addr.road || addr.pedestrian || addr.footway || addr.building) {
+                roadParts.push(addr.road || addr.pedestrian || addr.footway || addr.building);
+            }
+            const road = roadParts.join(' ');
+            const pieces = [];
+            if (road) pieces.push(road);
+            if (barangay) pieces.push('Brgy. ' + barangay);
+            if (city) pieces.push(city);
+            if (province) pieces.push(province);
+            if (postal) pieces.push(postal);
+            const full = pieces.length ? pieces.join(', ') : (data.display_name || '');
+            if (addrTextarea && full) {
+                addrTextarea.value = full;
+            }
+            if (distKm > MAX_DELIVERY_KM) {
+                lastChecked = full ? full.trim() : '';
+                showOutOfZoneCheckoutResult();
+            } else if (full) {
+                lastChecked = '';
+                runFreeTextCheck(full.trim());
+            }
+        } catch (err) {
+            console.warn('Reverse geocoding error:', err);
+            if (distKm > MAX_DELIVERY_KM) {
+                showOutOfZoneCheckoutResult();
+            }
+        }
+        updateCheckoutMapStatus(distKm);
+    }
+
+    function setCheckoutPin(lat, lng, doGeocode) {
+        if (!checkoutMap) return;
+        if (!checkoutPin) {
+            checkoutPin = L.marker([lat, lng], { draggable: true, title: 'Your Location (Drag to adjust)' }).addTo(checkoutMap);
+            checkoutPin.on('dragend', function (e) {
+                const pos = e.target.getLatLng();
+                setCheckoutPin(pos.lat, pos.lng, true);
+            });
+        } else {
+            checkoutPin.setLatLng([lat, lng]);
+        }
+        const distKm = haversineKm(STORE_LAT, STORE_LNG, lat, lng);
+        setDeliveryPin(lat, lng, distKm);
+        updateCheckoutMapStatus(distKm);
+        checkoutPin.bindPopup('<b>Your Selected Pin</b><br>' + distKm.toFixed(2) + ' km from BreadBreak').openPopup();
+        if (distKm > MAX_DELIVERY_KM) {
+            lastChecked = addrTextarea ? addrTextarea.value.trim() : '';
+            showOutOfZoneCheckoutResult();
+        }
+        if (doGeocode) {
+            clearTimeout(checkoutGeocodeTimer);
+            checkoutGeocodeTimer = setTimeout(function () { reverseGeocodeCheckout(lat, lng); }, 300);
+        }
+    }
+
+    function initCheckoutMap() {
+        const el = document.getElementById('checkout-address-map');
+        if (!el || typeof L === 'undefined') return;
+        if (checkoutMap) {
+            checkoutMap.invalidateSize();
+            return;
+        }
+        checkoutMap = L.map('checkout-address-map').setView([STORE_LAT, STORE_LNG], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
+            maxZoom: 19
+        }).addTo(checkoutMap);
+        L.circle([STORE_LAT, STORE_LNG], {
+            radius: MAX_DELIVERY_KM * 1000,
+            color: '#28a067',
+            fillColor: '#28a067',
+            fillOpacity: 0.09,
+            weight: 2,
+            dashArray: '5, 5'
+        }).addTo(checkoutMap);
+        const storeIcon = L.divIcon({
+            className: 'breadbreak-map-store-icon',
+            html: '<div style="background:#c05c28;color:#fff;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,0.35);border:2px solid #fff;"><i class="fa-solid fa-bread-slice" style="font-size:14px;"></i></div>',
+            iconSize: [32, 32],
+            iconAnchor: [16, 16],
+            popupAnchor: [0, -18]
+        });
+        L.marker([STORE_LAT, STORE_LNG], { icon: storeIcon }).addTo(checkoutMap)
+            .bindPopup('<strong>BreadBreak Bakery</strong><br>Estrella Village, Guiguinto, Bulacan<br><span style="color:#28a067;font-weight:700;">8km delivery hub</span>');
+        checkoutMap.on('click', function (e) {
+            setCheckoutPin(e.latlng.lat, e.latlng.lng, true);
+        });
+        const locateBtn = document.getElementById('checkout-btn-locate-me');
+        if (locateBtn && !locateBtn.dataset.bound) {
+            locateBtn.dataset.bound = '1';
+            locateBtn.addEventListener('click', function () {
+                if (!navigator.geolocation) {
+                    alert('Geolocation is not supported by your browser.');
+                    return;
+                }
+                const originalHtml = locateBtn.innerHTML;
+                locateBtn.disabled = true;
+                locateBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Locating…';
+                navigator.geolocation.getCurrentPosition(
+                    function (pos) {
+                        locateBtn.disabled = false;
+                        locateBtn.innerHTML = originalHtml;
+                        checkoutMap.setView([pos.coords.latitude, pos.coords.longitude], 15);
+                        setCheckoutPin(pos.coords.latitude, pos.coords.longitude, true);
+                    },
+                    function () {
+                        locateBtn.disabled = false;
+                        locateBtn.innerHTML = originalHtml;
+                        alert('Unable to get your GPS location. Please allow location permissions or click directly on the map to set your pin.');
+                    },
+                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                );
+            });
+        }
+    }
+
+    function revealCheckoutMap() {
+        initCheckoutMap();
+        setTimeout(function () {
+            if (checkoutMap) checkoutMap.invalidateSize();
+        }, 220);
+    }
+
+    function restoreSavedAddressSelection() {
+        usingOtherAddr = false;
+        clearDeliveryPin();
+        if (savedAddrList) savedAddrList.classList.remove('is-paused');
+        if (addrTextarea) addrTextarea.value = '';
+        if (resultBox) resultBox.style.display = 'none';
+        lastChecked = '';
+        if (lastSavedRadio) lastSavedRadio.checked = true;
+        applySelectedRadio();
     }
 
     // ── SAVED ADDRESS MODE ────────────────────────────────────────────────────
     function applySelectedRadio() {
         if (usingOtherAddr || currentFulfillment === 'pickup') return;
+        clearDeliveryPin();
         const checked = [...radios].find(r => r.checked);
         if (!checked) {
             hiddenAddr.value = '';
@@ -1453,9 +1759,13 @@ $pageTitle = 'Checkout | BreadBreak';
             });
         });
 
+        lastSavedRadio = [...radios].find(r => r.checked) || radios[0] || null;
+
         radios.forEach(function (radio) {
             radio.addEventListener('change', function () {
+                lastSavedRadio = this;
                 usingOtherAddr = false;
+                if (savedAddrList) savedAddrList.classList.remove('is-paused');
                 if (otherAddrWrap) otherAddrWrap.style.display = 'none';
                 if (useOtherToggle) useOtherToggle.innerHTML = '<i class="fa-solid fa-plus" style="margin-right:.4rem;"></i> Use a different address';
                 applySelectedRadio();
@@ -1470,17 +1780,21 @@ $pageTitle = 'Checkout | BreadBreak';
                     ? '<i class="fa-solid fa-chevron-up" style="margin-right:.4rem;"></i> Cancel — use saved address'
                     : '<i class="fa-solid fa-plus" style="margin-right:.4rem;"></i> Use a different address';
                 if (!usingOtherAddr) {
-                    radios.forEach(r => { if (r.checked) r.dispatchEvent(new Event('change')); });
+                    restoreSavedAddressSelection();
                 } else {
+                    lastSavedRadio = [...radios].find(r => r.checked) || lastSavedRadio;
                     radios.forEach(r => r.checked = false);
                     addrCards.forEach(c => c.classList.remove('is-checked'));
+                    if (savedAddrList) savedAddrList.classList.add('is-paused');
                     hiddenAddr.value = '';
                     hiddenFee.value = 0;
                     updateSummaryFee(null);
-                    setOrderButton(false, 'Enter your delivery address to continue.');
+                    setOrderButton(false, 'Pin your location or enter a delivery address to continue.');
                     if (resultBox) resultBox.style.display = 'none';
                     lastChecked = '';
-                    if (addrTextarea) addrTextarea.focus();
+                    revealCheckoutMap();
+                    const existing = addrTextarea ? addrTextarea.value.trim() : '';
+                    if (existing.length >= 5) runFreeTextCheck(existing);
                 }
             });
         }
@@ -1490,13 +1804,26 @@ $pageTitle = 'Checkout | BreadBreak';
 
     // ── FREE-TEXT MODE ────────────────────────────────────────────────────────
     async function runFreeTextCheck(address) {
+        if (checkoutPinKm != null && checkoutPinKm > MAX_DELIVERY_KM) {
+            lastChecked = address;
+            showOutOfZoneCheckoutResult();
+            return;
+        }
         if (address === lastChecked) return;
         lastChecked = address;
         if (resultBox) showInlineResult(resultBox, 'loading', 'Checking delivery availability…');
         setOrderButton(false, 'Checking your address…');
         updateSummaryFee(null);
 
+        const pinCoords = (checkoutPinKm != null && hiddenLat && hiddenLng && hiddenLat.value && hiddenLng.value)
+            ? { lat: parseFloat(hiddenLat.value), lng: parseFloat(hiddenLng.value) }
+            : null;
+
         await checkZone(address, function (data) {
+            if (checkoutPinKm != null && checkoutPinKm > MAX_DELIVERY_KM) {
+                showOutOfZoneCheckoutResult();
+                return;
+            }
             if (data.allowed) {
                 const fee = parseFloat(data.delivery_fee ?? 50);
                 hiddenAddr.value = address;
@@ -1510,19 +1837,20 @@ $pageTitle = 'Checkout | BreadBreak';
                     updateOrderButtonState();
                 }
             } else {
-                hiddenAddr.value = '';
-                hiddenFee.value  = 0;
-                updateSummaryFee(null);
-                if (resultBox) {
-                    resultBox.style.display = 'flex';
-                    resultBox.className = 'zone-check-result zone-blocked';
-                    resultBox.innerHTML = '<i class="fa-solid fa-circle-xmark"></i><div style="flex:1;">' +
-                        '<strong>Outside 8km Delivery Zone</strong>' +
-                        '<p style="margin:.25rem 0 .4rem;font-size:.82rem;">Delivery is not available for this address, but you can switch to <strong>Store Pickup (Free)</strong>.</p>' +
-                        '<button type="button" class="addr-btn addr-btn-default switch-to-pickup-btn" style="font-size:.78rem;padding:.3rem .75rem;background:#fff;border:1.5px solid var(--accent);color:var(--accent);font-weight:700;cursor:pointer;border-radius:6px;display:inline-flex;align-items:center;gap:.35rem;"><i class="fa-solid fa-store"></i> Switch to Store Pickup (Free)</button>' +
-                    '</div>';
-                }
-                setOrderButton(false, 'Selected address is outside our 8km delivery zone. Switch to Store Pickup to continue.');
+                showOutOfZoneCheckoutResult();
+            }
+        }, pinCoords);
+    }
+
+    if (checkoutForm) {
+        checkoutForm.addEventListener('submit', function (e) {
+            if (placeOrderBtn.disabled) {
+                e.preventDefault();
+                return;
+            }
+            if (currentFulfillment === 'delivery' && checkoutPinKm != null && checkoutPinKm > MAX_DELIVERY_KM) {
+                e.preventDefault();
+                showOutOfZoneCheckoutResult();
             }
         });
     }
@@ -1563,7 +1891,8 @@ $pageTitle = 'Checkout | BreadBreak';
         if (!savedAddrList) {
             const prefilled = addrTextarea.value.trim();
             if (prefilled.length >= 5) runFreeTextCheck(prefilled);
-            else setOrderButton(false, 'Enter your delivery address to continue.');
+            else setOrderButton(false, 'Pin your location or enter your delivery address to continue.');
+            revealCheckoutMap();
         }
     }
 
@@ -1587,12 +1916,12 @@ $pageTitle = 'Checkout | BreadBreak';
     let currentPayMethod = 'GCASH';
 
     const payMethodMeta = {
-        GCASH:     { label: 'GCash',              logo: '/BreadBreak/assets/images/payments/gcash.svg',     btnLabel: 'Confirm & Pay via GCash',     btnIcon: 'fa-mobile-screen' },
-        PAYMAYA:   { label: 'Maya',               logo: '/BreadBreak/assets/images/payments/maya.svg',      btnLabel: 'Confirm & Pay via Maya',      btnIcon: 'fa-leaf' },
-        GRABPAY:   { label: 'GrabPay',            logo: '/BreadBreak/assets/images/payments/grabpay.svg',   btnLabel: 'Confirm & Pay via GrabPay',   btnIcon: 'fa-car-side' },
-        SHOPEEPAY: { label: 'ShopeePay',          logo: '/BreadBreak/assets/images/payments/shopeepay.svg', btnLabel: 'Confirm & Pay via ShopeePay', btnIcon: 'fa-bag-shopping' },
-        CARD:      { label: 'Credit / Debit Card',logo: '/BreadBreak/assets/images/payments/card.svg',      btnLabel: 'Confirm & Pay via Card',      btnIcon: 'fa-credit-card' },
-        CASH:      { label: 'Cash',               logo: '/BreadBreak/assets/images/payments/cash.svg',      btnLabel: 'Confirm Order (Cash)',         btnIcon: 'fa-money-bill-wave' },
+        GCASH:     { label: 'GCash',              logo: '/BreadBreak/assets/images/payments/GCash-Emblem.png',     btnLabel: 'Confirm & Pay via GCash',     btnIcon: 'fa-mobile-screen' },
+        PAYMAYA:   { label: 'Maya',               logo: '/BreadBreak/assets/images/payments/maya-emblem.png',      btnLabel: 'Confirm & Pay via Maya',      btnIcon: 'fa-leaf' },
+        GRABPAY:   { label: 'GrabPay',            logo: '/BreadBreak/assets/images/payments/grabpay-emblem.png',   btnLabel: 'Confirm & Pay via GrabPay',   btnIcon: 'fa-car-side' },
+        SHOPEEPAY: { label: 'ShopeePay',          logo: '/BreadBreak/assets/images/payments/Shopeepay-emblem.png', btnLabel: 'Confirm & Pay via ShopeePay', btnIcon: 'fa-bag-shopping' },
+        CARD:      { label: 'Credit / Debit Card',logo: '/BreadBreak/assets/images/payments/card.svg',             btnLabel: 'Confirm & Pay via Card',      btnIcon: 'fa-credit-card' },
+        CASH:      { label: 'Cash',               logo: '/BreadBreak/assets/images/payments/P-Cash-emblem.png',    btnLabel: 'Confirm Order (Cash)',         btnIcon: 'fa-money-bill-wave' },
     };
 
     function getCurrentGrandTotal() {
@@ -1607,7 +1936,7 @@ $pageTitle = 'Checkout | BreadBreak';
 
         // Update summary badge with clean SVG logo
         if (payBadgeDisplay) {
-            payBadgeDisplay.innerHTML = '<img src="' + meta.logo + '" alt="' + meta.label + '" style="height:18px;max-width:60px;vertical-align:middle;margin-right:6px;border-radius:3px;"> Pay via ' + meta.label + (method === 'CASH' ? '' : ' (TEST MODE)');
+            payBadgeDisplay.innerHTML = '<img src="' + meta.logo + '" alt="' + meta.label + '" class="payment-badge-logo"> Pay via ' + meta.label + (method === 'CASH' ? '' : ' (TEST MODE)');
         }
 
         // Update submit button label & icon

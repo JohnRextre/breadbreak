@@ -5,15 +5,25 @@ $headerCartCount = isset($_SESSION['cart']) && is_array($_SESSION['cart']) ? arr
 $isCustomerHeader = ($_SESSION['role'] ?? '') === 'customer';
 $customerProfileImage = $profileImage ?? '';
 $customerInitial = strtoupper(substr(trim((string) ($_SESSION['first_name'] ?? '')), 0, 1));
-if ($isCustomerHeader && !$customerProfileImage && !empty($_SESSION['user_id'])) {
+$headerActiveOrders = 0;
+if ($isCustomerHeader && !empty($_SESSION['user_id'])) {
     require_once __DIR__ . '/../config/database.php';
-    $headerAccountStatement = getDatabaseConnection()->prepare('SELECT first_name, profile_data, profile_mime FROM users WHERE id = :id LIMIT 1');
-    $headerAccountStatement->execute(['id' => (int) $_SESSION['user_id']]);
-    $headerAccount = $headerAccountStatement->fetch() ?: [];
-    $customerInitial = strtoupper(substr(trim((string) ($headerAccount['first_name'] ?? '')), 0, 1));
-    if (!empty($headerAccount['profile_data']) && !empty($headerAccount['profile_mime'])) {
-        $customerProfileImage = 'data:' . $headerAccount['profile_mime'] . ';base64,' . base64_encode($headerAccount['profile_data']);
+    $headerPdo = getDatabaseConnection();
+    if (!$customerProfileImage) {
+        $headerAccountStatement = $headerPdo->prepare('SELECT first_name, profile_data, profile_mime FROM users WHERE id = :id LIMIT 1');
+        $headerAccountStatement->execute(['id' => (int) $_SESSION['user_id']]);
+        $headerAccount = $headerAccountStatement->fetch() ?: [];
+        $customerInitial = strtoupper(substr(trim((string) ($headerAccount['first_name'] ?? '')), 0, 1));
+        if (!empty($headerAccount['profile_data']) && !empty($headerAccount['profile_mime'])) {
+            $customerProfileImage = 'data:' . $headerAccount['profile_mime'] . ';base64,' . base64_encode($headerAccount['profile_data']);
+        }
     }
+    $activeStmt = $headerPdo->prepare(
+        "SELECT COUNT(*) FROM orders
+         WHERE customer_id = :cid AND status NOT IN ('completed', 'cancelled')"
+    );
+    $activeStmt->execute(['cid' => (int) $_SESSION['user_id']]);
+    $headerActiveOrders = (int) $activeStmt->fetchColumn();
 }
 $customerInitial = $customerInitial ?: '?';
 $navItems = [
@@ -22,8 +32,9 @@ $navItems = [
     ['label' => 'About Us', 'href' => '/BreadBreak/about.php', 'page' => 'about.php'],
     ['label' => 'Contact', 'href' => '/BreadBreak/contact.php', 'page' => 'contact.php'],
 ];
-$showCartPages = ['menu.php', 'shop.php', 'menu_dashboard.php', 'cart.php', 'checkout.php', 'order-confirmation.php'];
+$showCartPages = ['menu.php', 'shop.php', 'menu_dashboard.php', 'cart.php', 'checkout.php', 'order-confirmation.php', 'order-status.php'];
 $showCartIcon = in_array($currentPage, $showCartPages, true);
+$isOrderStatusPage = $currentPage === 'order-status.php';
 ?>
 
 <!DOCTYPE html>
@@ -60,7 +71,15 @@ $showCartIcon = in_array($currentPage, $showCartPages, true);
             </nav><?php endif; ?>
 
             <div class="header-tools">
-                <?php if ($isCustomerHeader): ?><a href="#" class="customer-header-icon is-disabled" aria-label="Delivery tracking coming soon" title="Delivery tracking coming soon" aria-disabled="true"><i class="fa-solid fa-truck"></i></a><a href="/BreadBreak/customer/account.php" class="customer-profile-button" aria-label="Open My Account" title="My Account"><?php if ($customerProfileImage): ?><img src="<?php echo htmlspecialchars($customerProfileImage); ?>" alt="Profile photo" /><?php else: ?><span aria-hidden="true"><?php echo htmlspecialchars($customerInitial); ?></span><?php endif; ?></a><?php endif; ?>
+                <?php if ($isCustomerHeader): ?>
+                <a href="/BreadBreak/customer/order-status.php" class="customer-header-icon<?php echo $isOrderStatusPage ? ' is-active' : ''; ?>" aria-label="Order status" title="Order Status">
+                    <i class="fa-solid fa-bread-slice"></i>
+                    <?php if ($headerActiveOrders > 0): ?>
+                        <span class="cart-count"><?php echo $headerActiveOrders > 9 ? '9+' : $headerActiveOrders; ?></span>
+                    <?php endif; ?>
+                </a>
+                <a href="/BreadBreak/customer/account.php" class="customer-profile-button" aria-label="Open My Account" title="My Account"><?php if ($customerProfileImage): ?><img src="<?php echo htmlspecialchars($customerProfileImage); ?>" alt="Profile photo" /><?php else: ?><span aria-hidden="true"><?php echo htmlspecialchars($customerInitial); ?></span><?php endif; ?></a>
+                <?php endif; ?>
                 <?php if ($showCartIcon): ?>
                 <a href="/BreadBreak/cart.php" class="cart-button" aria-label="Shopping cart" title="Shopping cart">
                     <i class="fa-solid fa-cart-shopping"></i><span class="cart-count" data-cart-count><?php echo (int) $headerCartCount; ?></span>

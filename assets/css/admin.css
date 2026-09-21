@@ -219,6 +219,7 @@ body.admin-body { margin: 0; background: var(--admin-cream); color: var(--admin-
 .role-badge { display: inline-block; padding: 5px 9px; border-radius: 20px; font-size: 10px; font-weight: 700; }
 .role-admin { color: #78503a; background: #f6e9df; }
 .role-staff { color: #356d91; background: #eaf4f9; }
+.role-rider { color: #8a4a16; background: #f8ead8; }
 .role-customer { color: #557346; background: #edf6e9; }
 .status.inactive { color: #a34f43; background: #fbeceb; }
 .actions-cell { position: relative; }
