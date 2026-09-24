@@ -10,6 +10,10 @@ $customerId = (int) ($_SESSION['user_id'] ?? 0);
 $profileColumn = (int) $pdo->query("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'profile_data'")->fetchColumn();
 if (!$profileColumn) $pdo->exec("ALTER TABLE users ADD COLUMN profile_data MEDIUMBLOB NULL AFTER password, ADD COLUMN profile_mime VARCHAR(50) NULL AFTER profile_data");
 
+// ── Ensure saved Senior/PWD IDs and favorites tables exist ───────────────────
+$pdo->exec("CREATE TABLE IF NOT EXISTS customer_discount_ids (id INT PRIMARY KEY AUTO_INCREMENT, customer_id INT NOT NULL, id_type ENUM('senior','pwd') NOT NULL DEFAULT 'senior', id_number VARCHAR(100) NOT NULL, full_name VARCHAR(150) NOT NULL, is_default TINYINT(1) NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, UNIQUE KEY uq_customer_disc (customer_id, id_number), KEY idx_disc_customer (customer_id), CONSTRAINT fk_disc_customer FOREIGN KEY (customer_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+$pdo->exec("CREATE TABLE IF NOT EXISTS customer_favorites (customer_id INT NOT NULL, inventory_item_id INT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (customer_id, inventory_item_id), CONSTRAINT fk_fav_customer FOREIGN KEY (customer_id) REFERENCES users(id) ON DELETE CASCADE, CONSTRAINT fk_fav_item FOREIGN KEY (inventory_item_id) REFERENCES inventory_items(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
 $accountStatement = $pdo->prepare('SELECT first_name, last_name, phone, email, profile_data, profile_mime FROM users WHERE id = :id LIMIT 1');
 $accountStatement->execute(['id' => $customerId]);
 $account = $accountStatement->fetch() ?: [];
@@ -179,6 +183,99 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
     }
 }
 
+// ── Saved Senior / PWD discount IDs + favorites ──────────────────────────────
+$discountError = '';
+$discountSuccess = '';
+$discountPanelActive = false;
+$favoritesPanelActive = false;
+$MAX_DISCOUNT_IDS = 5;
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $accountAction = $_POST['action'] ?? '';
+
+    if ($accountAction === 'remove_favorite') {
+        $favProduct = (int) ($_POST['product_id'] ?? 0);
+        $favoritesPanelActive = true;
+        if ($favProduct > 0) {
+            $pdo->prepare('DELETE FROM customer_favorites WHERE customer_id = :cid AND inventory_item_id = :pid')
+                ->execute(['cid' => $customerId, 'pid' => $favProduct]);
+            $discountSuccess = 'Removed from your favorites.';
+        }
+    }
+
+    if ($accountAction === 'add_discount_id') {
+        $discountPanelActive = true;
+        $idType    = in_array($_POST['discount_id_type'] ?? '', ['senior', 'pwd'], true) ? $_POST['discount_id_type'] : '';
+        $idNumber  = preg_replace('/\s+/', ' ', trim(strip_tags($_POST['discount_id_number'] ?? '')));
+        $cardName  = preg_replace('/\s+/', ' ', trim(strip_tags($_POST['discount_full_name'] ?? '')));
+
+        if ($idType === '') {
+            $discountError = 'Please choose a Senior Citizen or PWD ID.';
+        } elseif (strlen($idNumber) < 4 || strlen($idNumber) > 30) {
+            $discountError = 'Please enter a valid ID number (4 to 30 characters).';
+        } elseif ($cardName === '' || mb_strlen($cardName) > 70) {
+            $discountError = "Please enter the cardholder's full name as shown on the ID.";
+        } else {
+            try {
+                $countStatement = $pdo->prepare('SELECT COUNT(*) FROM customer_discount_ids WHERE customer_id = :cid');
+                $countStatement->execute(['cid' => $customerId]);
+                $savedIdCount = (int) $countStatement->fetchColumn();
+
+                $dupeStatement = $pdo->prepare('SELECT id FROM customer_discount_ids WHERE customer_id = :cid AND id_number = :num LIMIT 1');
+                $dupeStatement->execute(['cid' => $customerId, 'num' => $idNumber]);
+
+                if ($savedIdCount >= $MAX_DISCOUNT_IDS) {
+                    $discountError = 'You can save up to ' . $MAX_DISCOUNT_IDS . ' discount IDs. Remove one first.';
+                } elseif ($dupeStatement->fetch()) {
+                    $discountError = 'That ID number is already saved to your account.';
+                } else {
+                    $pdo->prepare('INSERT INTO customer_discount_ids (customer_id, id_type, id_number, full_name, is_default) VALUES (:cid, :type, :num, :name, :def)')
+                        ->execute([
+                            'cid'  => $customerId,
+                            'type' => $idType,
+                            'num'  => $idNumber,
+                            'name' => $cardName,
+                            'def'  => $savedIdCount === 0 ? 1 : 0,
+                        ]);
+                    $discountSuccess = 'Discount ID saved. Just pick it during checkout to apply the 20% discount.';
+                }
+            } catch (Throwable $discountException) {
+                $discountError = 'Could not save that ID right now. Please try again.';
+            }
+        }
+    }
+
+    if ($accountAction === 'delete_discount_id') {
+        $discountPanelActive = true;
+        $savedId = (int) ($_POST['discount_id'] ?? 0);
+        $ownStatement = $pdo->prepare('SELECT id, is_default FROM customer_discount_ids WHERE id = :id AND customer_id = :cid LIMIT 1');
+        $ownStatement->execute(['id' => $savedId, 'cid' => $customerId]);
+        $ownRow = $ownStatement->fetch();
+        if ($ownRow) {
+            $pdo->prepare('DELETE FROM customer_discount_ids WHERE id = :id')->execute(['id' => $savedId]);
+            if ((int) $ownRow['is_default'] === 1) {
+                $pdo->prepare('UPDATE customer_discount_ids SET is_default = 1 WHERE customer_id = :cid ORDER BY created_at ASC LIMIT 1')
+                    ->execute(['cid' => $customerId]);
+            }
+            $discountSuccess = 'Discount ID removed.';
+        }
+    }
+
+    if ($accountAction === 'set_default_discount_id') {
+        $discountPanelActive = true;
+        $savedId = (int) ($_POST['discount_id'] ?? 0);
+        $ownStatement = $pdo->prepare('SELECT id FROM customer_discount_ids WHERE id = :id AND customer_id = :cid LIMIT 1');
+        $ownStatement->execute(['id' => $savedId, 'cid' => $customerId]);
+        if ($ownStatement->fetch()) {
+            $pdo->beginTransaction();
+            $pdo->prepare('UPDATE customer_discount_ids SET is_default = 0 WHERE customer_id = :cid')->execute(['cid' => $customerId]);
+            $pdo->prepare('UPDATE customer_discount_ids SET is_default = 1 WHERE id = :id')->execute(['id' => $savedId]);
+            $pdo->commit();
+            $discountSuccess = 'Default discount ID updated. It will be pre-picked at checkout.';
+        }
+    }
+}
+
 // Load saved addresses
 $addrStmt = $pdo->prepare(
     'SELECT id, label, full_address, barangay, city, province, postal_code, is_default
@@ -186,6 +283,34 @@ $addrStmt = $pdo->prepare(
 );
 $addrStmt->execute(['cid' => $customerId]);
 $savedAddresses = $addrStmt->fetchAll();
+
+// Load saved Senior / PWD IDs (default first — that's the one pre-picked at checkout)
+$discountIdStmt = $pdo->prepare(
+    'SELECT id, id_type, id_number, full_name, is_default
+     FROM customer_discount_ids WHERE customer_id = :cid ORDER BY is_default DESC, created_at ASC'
+);
+$discountIdStmt->execute(['cid' => $customerId]);
+$savedDiscountIds = $discountIdStmt->fetchAll();
+
+// Load favorite products (heart icon in the Shop)
+$favoritesStmt = $pdo->prepare(
+    "SELECT i.id, i.name, i.description, c.name AS category_name,
+            MIN(v.price) AS min_price,
+            COUNT(v.id) AS available_variants,
+            MAX(f.created_at) AS saved_at
+     FROM customer_favorites f
+     JOIN inventory_items i ON i.id = f.inventory_item_id
+     JOIN menu_categories c ON c.id = i.category_id
+     LEFT JOIN inventory_item_variants v
+            ON v.inventory_item_id = i.id
+           AND v.availability = 'available'
+           AND v.quantity > 0
+     WHERE f.customer_id = :cid
+     GROUP BY i.id, i.name, i.description, c.name
+     ORDER BY saved_at DESC"
+);
+$favoritesStmt->execute(['cid' => $customerId]);
+$favoriteItems = $favoritesStmt->fetchAll();
 
 // ── Page meta ──────────────────────────────────────────────────────────────────
 $pageTitle = 'My Account | BreadBreak';
@@ -196,10 +321,21 @@ $profileInitial = strtoupper(substr(trim((string) ($account['first_name'] ?? '')
 $activePanelOnLoad = 'personal-details';
 if ($passwordPanelActive)  $activePanelOnLoad = 'password-security';
 if ($addressPanelActive)   $activePanelOnLoad = 'my-addresses';
+if ($discountPanelActive)  $activePanelOnLoad = 'discount-ids';
+if ($favoritesPanelActive) $activePanelOnLoad = 'my-favorites';
+
+// Deep links such as account.php?panel=my-favorites (used after sign-in)
+$requestedPanel = (string) ($_GET['panel'] ?? '');
+if (!$passwordPanelActive && !$addressPanelActive && !$discountPanelActive && !$favoritesPanelActive
+    && in_array($requestedPanel, ['personal-details', 'my-addresses', 'discount-ids', 'my-favorites', 'password-security'], true)) {
+    $activePanelOnLoad = $requestedPanel;
+}
 
 $accountSections = [
     ['id' => 'personal-details', 'icon' => 'fa-user', 'title' => 'Personal Details', 'description' => 'Manage your name and contact information.'],
     ['id' => 'my-addresses',     'icon' => 'fa-location-dot', 'title' => 'My Addresses', 'description' => 'Save addresses for faster checkout.'],
+    ['id' => 'discount-ids',     'icon' => 'fa-id-card', 'title' => 'Senior / PWD ID', 'description' => 'Keep your discount IDs ready for checkout.'],
+    ['id' => 'my-favorites',     'icon' => 'fa-heart', 'title' => 'My Favorites', 'description' => 'Everything you tapped the heart on.'],
     ['id' => 'account-activities', 'icon' => 'fa-clock-rotate-left', 'title' => 'Account Activities', 'description' => 'Review activity from your BreadBreak account.', 'disabled' => true],
     ['id' => 'password-security', 'icon' => 'fa-lock', 'title' => 'Password & Security', 'description' => 'Keep your account password secure.'],
 ];
@@ -353,6 +489,155 @@ require __DIR__ . '/../includes/header.php';
                 </div>
                 <?php else: ?>
                 <p style="font-size:.85rem;color:var(--muted);margin-top:1rem;"><i class="fa-solid fa-circle-info" style="margin-right:.3rem;"></i>You've reached the maximum of <?php echo $MAX_ADDRESSES; ?> saved addresses. Remove one to add a new address.</p>
+                <?php endif; ?>
+            </section>
+
+            <!-- ── Senior / PWD ID Panel ── -->
+            <section class="account-panel<?php echo $activePanelOnLoad === 'discount-ids' ? ' is-active' : ''; ?>" id="discount-ids" data-account-panel>
+                <div class="account-panel-heading">
+                    <div>
+                        <span class="eyebrow">Checkout perks</span>
+                        <h2>Senior / PWD ID</h2>
+                        <p>Save your OSCA or PWD ID once and simply pick it during checkout to apply the 20% discount and VAT exemption.</p>
+                    </div>
+                </div>
+
+                <?php if ($discountError): ?>
+                    <p class="account-form-error" role="alert"><i class="fa-solid fa-circle-exclamation" style="margin-right:.35rem;"></i><?php echo htmlspecialchars($discountError); ?></p>
+                <?php endif; ?>
+                <?php if ($discountSuccess): ?>
+                    <p class="account-form-success" role="status"><i class="fa-solid fa-circle-check" style="margin-right:.35rem;"></i><?php echo htmlspecialchars($discountSuccess); ?></p>
+                <?php endif; ?>
+
+                <?php if (!empty($savedDiscountIds)): ?>
+                <div class="discount-id-list">
+                    <?php foreach ($savedDiscountIds as $savedId): ?>
+                    <div class="discount-id-card<?php echo (int) $savedId['is_default'] === 1 ? ' is-default' : ''; ?>">
+                        <div class="discount-id-icon"><i class="fa-solid <?php echo $savedId['id_type'] === 'pwd' ? 'fa-wheelchair' : 'fa-person-cane'; ?>"></i></div>
+                        <div class="discount-id-body">
+                            <div class="discount-id-head">
+                                <span class="discount-id-type"><?php echo $savedId['id_type'] === 'pwd' ? 'PWD ID' : 'Senior Citizen'; ?></span>
+                                <?php if ((int) $savedId['is_default'] === 1): ?><span class="address-default-badge"><i class="fa-solid fa-star"></i> Default</span><?php endif; ?>
+                            </div>
+                            <strong class="discount-id-number"><?php echo htmlspecialchars($savedId['id_number']); ?></strong>
+                            <span class="discount-id-name"><?php echo htmlspecialchars($savedId['full_name']); ?></span>
+                        </div>
+                        <div class="discount-id-actions">
+                            <?php if ((int) $savedId['is_default'] !== 1): ?>
+                            <form method="POST" style="display:inline;">
+                                <input type="hidden" name="action" value="set_default_discount_id" />
+                                <input type="hidden" name="discount_id" value="<?php echo (int) $savedId['id']; ?>" />
+                                <button type="submit" class="addr-btn addr-btn-default"><i class="fa-regular fa-star"></i> Set Default</button>
+                            </form>
+                            <?php endif; ?>
+                            <form method="POST" style="display:inline;" onsubmit="return confirm('Remove this saved discount ID?');">
+                                <input type="hidden" name="action" value="delete_discount_id" />
+                                <input type="hidden" name="discount_id" value="<?php echo (int) $savedId['id']; ?>" />
+                                <button type="submit" class="addr-btn addr-btn-remove"><i class="fa-solid fa-trash-can"></i> Remove</button>
+                            </form>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+                <?php else: ?>
+                <div class="address-empty">
+                    <i class="fa-solid fa-id-card"></i>
+                    <p>No saved discount ID yet. Add one below so it's ready the moment you check out.</p>
+                </div>
+                <?php endif; ?>
+
+                <?php if (count($savedDiscountIds) < $MAX_DISCOUNT_IDS): ?>
+                <div class="address-add-wrap">
+                    <div class="address-add-form" style="display:block;">
+                        <form method="POST" class="account-form" style="margin-top:0;">
+                            <input type="hidden" name="action" value="add_discount_id" />
+
+                            <fieldset class="discount-id-types">
+                                <legend>ID Type <span style="color:#c00;">*</span></legend>
+                                <label class="discount-id-type-option">
+                                    <input type="radio" name="discount_id_type" value="senior" checked />
+                                    <span><i class="fa-solid fa-person-cane"></i> Senior Citizen (OSCA ID)</span>
+                                </label>
+                                <label class="discount-id-type-option">
+                                    <input type="radio" name="discount_id_type" value="pwd" />
+                                    <span><i class="fa-solid fa-wheelchair"></i> Person with Disability (PWD ID)</span>
+                                </label>
+                            </fieldset>
+
+                            <div class="account-form-grid">
+                                <label>ID Number <span style="color:#c00;">*</span>
+                                    <input type="text" name="discount_id_number" maxlength="30" required placeholder="e.g. SC-123456 or PWD-2026-89" />
+                                </label>
+                                <label>Cardholder Full Name <span style="color:#c00;">*</span>
+                                    <input type="text" name="discount_full_name" maxlength="70" required placeholder="e.g. Juan Dela Cruz" />
+                                </label>
+                            </div>
+
+                            <button class="addr-btn addr-btn-default" type="submit"><i class="fa-solid fa-plus"></i> Save Discount ID</button>
+                            <small class="discount-id-help"><i class="fa-solid fa-circle-info"></i> Up to <?php echo $MAX_DISCOUNT_IDS; ?> IDs. The default one is pre-picked for you at checkout.</small>
+                        </form>
+                    </div>
+                </div>
+                <?php else: ?>
+                <p style="font-size:.85rem;color:var(--muted);margin-top:1rem;"><i class="fa-solid fa-circle-info" style="margin-right:.3rem;"></i>You've saved the maximum of <?php echo $MAX_DISCOUNT_IDS; ?> discount IDs. Remove one to add another.</p>
+                <?php endif; ?>
+
+                <div class="checkout-alert alert-info" style="margin-top:1.1rem;margin-bottom:0;font-size:.82rem;padding:.65rem .9rem;">
+                    <i class="fa-solid fa-circle-info"></i>
+                    <span><strong>Verification Policy:</strong> Please present the physical Senior Citizen / PWD ID upon receiving the order for verification.</span>
+                </div>
+            </section>
+
+            <!-- ── My Favorites Panel ── -->
+            <section class="account-panel<?php echo $activePanelOnLoad === 'my-favorites' ? ' is-active' : ''; ?>" id="my-favorites" data-account-panel>
+                <div class="account-panel-heading">
+                    <div>
+                        <span class="eyebrow">Saved for later</span>
+                        <h2>My Favorites</h2>
+                        <p>Tap the heart on any product in the Shop and it stays saved here.</p>
+                    </div>
+                </div>
+
+                <?php if ($favoritesPanelActive && $discountSuccess): ?>
+                    <p class="account-form-success" role="status"><i class="fa-solid fa-circle-check" style="margin-right:.35rem;"></i><?php echo htmlspecialchars($discountSuccess); ?></p>
+                <?php endif; ?>
+
+                <?php if (!empty($favoriteItems)): ?>
+                <div class="favorites-grid">
+                    <?php foreach ($favoriteItems as $favorite): ?>
+                    <article class="favorite-card">
+                        <a class="favorite-media" href="/BreadBreak/menu.php#/item/<?php echo (int) $favorite['id']; ?>">
+                            <img src="/BreadBreak/api/product-image.php?id=<?php echo (int) $favorite['id']; ?>" alt="<?php echo htmlspecialchars($favorite['name']); ?>" loading="lazy" />
+                        </a>
+                        <div class="favorite-body">
+                            <span class="favorite-category"><?php echo htmlspecialchars($favorite['category_name']); ?></span>
+                            <h3><?php echo htmlspecialchars($favorite['name']); ?></h3>
+                            <div class="favorite-meta">
+                                <span class="price"><?php echo $favorite['min_price'] !== null ? 'from ₱' . number_format((float) $favorite['min_price'], 2) : 'Unavailable'; ?></span>
+                                <?php if ((int) $favorite['available_variants'] > 0): ?>
+                                <span class="favorite-badge"><i class="fa-solid fa-circle-check"></i> In stock</span>
+                                <?php else: ?>
+                                <span class="favorite-badge is-out"><i class="fa-solid fa-clock"></i> Out of stock</span>
+                                <?php endif; ?>
+                            </div>
+                            <div class="favorite-actions">
+                                <a class="addr-btn addr-btn-default" href="/BreadBreak/menu.php#/item/<?php echo (int) $favorite['id']; ?>"><i class="fa-solid fa-bag-shopping"></i> View in Shop</a>
+                                <form method="POST" style="display:inline;">
+                                    <input type="hidden" name="action" value="remove_favorite" />
+                                    <input type="hidden" name="product_id" value="<?php echo (int) $favorite['id']; ?>" />
+                                    <button type="submit" class="addr-btn addr-btn-remove is-heart"><i class="fa-solid fa-heart"></i> Remove</button>
+                                </form>
+                            </div>
+                        </div>
+                    </article>
+                    <?php endforeach; ?>
+                </div>
+                <?php else: ?>
+                <div class="address-empty favorites-empty">
+                    <i class="fa-solid fa-heart"></i>
+                    <p>No favorites yet. Tap the heart on any product in the Shop to keep it here.</p>
+                    <a class="addr-btn addr-btn-default" href="/BreadBreak/menu.php"><i class="fa-solid fa-store"></i> Browse the Shop</a>
+                </div>
                 <?php endif; ?>
             </section>
 

@@ -8,6 +8,11 @@
 // 4. Smart ID & Name validation checkers
 // ============================================================
 require_once __DIR__ . '/includes/auth.php';
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'customer') {
+    // Signed-out shoppers sign in first, then come back to their cart.
+    header('Location: /BreadBreak/login.php?redirect=checkout');
+    exit;
+}
 requireRole('customer');
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/config/xendit.php';
@@ -38,7 +43,17 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS orders (
     CONSTRAINT fk_order_customer FOREIGN KEY (customer_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE RESTRICT
 )");
 
+// Saved Senior / PWD IDs live in My Account — surfaced here for one-tap selection
+$pdo->exec("CREATE TABLE IF NOT EXISTS customer_discount_ids (id INT PRIMARY KEY AUTO_INCREMENT, customer_id INT NOT NULL, id_type ENUM('senior','pwd') NOT NULL DEFAULT 'senior', id_number VARCHAR(100) NOT NULL, full_name VARCHAR(150) NOT NULL, is_default TINYINT(1) NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, UNIQUE KEY uq_customer_disc (customer_id, id_number), KEY idx_disc_customer (customer_id), CONSTRAINT fk_disc_customer FOREIGN KEY (customer_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
 $customerId = (int) $_SESSION['user_id'];
+
+$savedDiscountIdStmt = $pdo->prepare(
+    'SELECT id, id_type, id_number, full_name, is_default
+     FROM customer_discount_ids WHERE customer_id = :cid ORDER BY is_default DESC, created_at ASC'
+);
+$savedDiscountIdStmt->execute(['cid' => $customerId]);
+$savedDiscountIds = $savedDiscountIdStmt->fetchAll();
 
 // ── Load cart items with FRESH prices from DB ──
 $cartItems  = [];
@@ -760,6 +775,35 @@ $pageTitle = 'Checkout | BreadBreak';
                         </label>
                     </div>
 
+                    <?php if (!empty($savedDiscountIds)): ?>
+                    <div class="saved-id-picker" id="saved-id-picker">
+                        <div class="saved-id-picker-head">
+                            <span><i class="fa-solid fa-bookmark"></i> Saved from My Account</span>
+                            <a href="/BreadBreak/customer/account.php?panel=discount-ids">Manage IDs</a>
+                        </div>
+                        <div class="saved-id-list">
+                            <?php foreach ($savedDiscountIds as $savedId): ?>
+                            <button type="button"
+                                class="saved-id-chip<?php echo (int) $savedId['is_default'] === 1 ? ' is-default' : ''; ?>"
+                                data-saved-disc-id
+                                data-id-type="<?php echo htmlspecialchars($savedId['id_type']); ?>"
+                                data-id-number="<?php echo htmlspecialchars($savedId['id_number']); ?>"
+                                data-id-name="<?php echo htmlspecialchars($savedId['full_name']); ?>">
+                                <i class="fa-solid <?php echo $savedId['id_type'] === 'pwd' ? 'fa-wheelchair' : 'fa-person-cane'; ?>"></i>
+                                <span class="saved-id-chip-body">
+                                    <strong><?php echo htmlspecialchars($savedId['full_name']); ?></strong>
+                                    <small><?php echo $savedId['id_type'] === 'pwd' ? 'PWD ID' : 'Senior Citizen'; ?> · <?php echo htmlspecialchars($savedId['id_number']); ?></small>
+                                </span>
+                                <?php if ((int) $savedId['is_default'] === 1): ?><em><i class="fa-solid fa-star"></i> Default</em><?php endif; ?>
+                            </button>
+                            <?php endforeach; ?>
+                        </div>
+                        <p class="saved-id-picker-hint"><i class="fa-solid fa-hand-pointer"></i> Tap an ID to apply it in one go.</p>
+                    </div>
+                    <?php else: ?>
+                    <p class="saved-id-picker-empty">Have a Senior Citizen or PWD ID? <a href="/BreadBreak/customer/account.php?panel=discount-ids">Save it in My Account</a> and pick it here with one tap next time.</p>
+                    <?php endif; ?>
+
                     <div id="discount-fields-wrap" style="display:none;margin-top:1.2rem;padding-top:1.2rem;border-top:1px dashed var(--border);">
                         <div style="display:flex;gap:1.5rem;margin-bottom:1rem;flex-wrap:wrap;">
                             <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.88rem;font-weight:600;color:var(--brown-800);">
@@ -1400,6 +1444,46 @@ $pageTitle = 'Checkout | BreadBreak';
             r.addEventListener('change', function () {
                 if (applyDiscountCb.checked && hiddenDiscType) hiddenDiscType.value = this.value;
             });
+        });
+
+        // ── Saved Senior / PWD IDs (from My Account) — one tap applies one ──
+        const savedIdChips = document.querySelectorAll('[data-saved-disc-id]');
+
+        function markSelectedSavedId(activeChip) {
+            savedIdChips.forEach(function (chip) { chip.classList.toggle('is-selected', chip === activeChip); });
+        }
+
+        savedIdChips.forEach(function (chip) {
+            chip.addEventListener('click', function () {
+                const type = chip.dataset.idType === 'pwd' ? 'pwd' : 'senior';
+                const typeRadio = document.querySelector('input[name="discount_type_radio"][value="' + type + '"]');
+                if (typeRadio) typeRadio.checked = true;
+
+                if (discountIdInput) discountIdInput.value = chip.dataset.idNumber || '';
+                if (discountNameInput) discountNameInput.value = chip.dataset.idName || '';
+
+                markSelectedSavedId(chip);
+
+                if (!applyDiscountCb.checked) {
+                    // The checkbox handler copies the fields into the hidden inputs.
+                    applyDiscountCb.checked = true;
+                    applyDiscountCb.dispatchEvent(new Event('change'));
+                } else {
+                    if (hiddenApplyDisc) hiddenApplyDisc.value = '1';
+                    if (hiddenDiscType) hiddenDiscType.value = type;
+                    if (discountWrap) discountWrap.style.display = 'block';
+                    checkIdInput();
+                    checkNameInput();
+                    recalculateTotal();
+                }
+
+                if (discountWrap) discountWrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            });
+        });
+
+        // Switching the discount off clears the selected saved ID.
+        applyDiscountCb.addEventListener('change', function () {
+            if (!this.checked) markSelectedSavedId(null);
         });
 
         function checkIdInput() {

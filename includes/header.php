@@ -29,6 +29,7 @@ $customerInitial = $customerInitial ?: '?';
 $navItems = [
     ['label' => 'Home', 'href' => '/BreadBreak/index.php', 'page' => 'index.php'],
     ['label' => 'Shop', 'href' => '/BreadBreak/menu.php', 'page' => 'menu.php'],
+    ['label' => 'Moments', 'href' => '/BreadBreak/moments.php', 'page' => 'moments.php'],
     ['label' => 'About Us', 'href' => '/BreadBreak/about.php', 'page' => 'about.php'],
     ['label' => 'Contact', 'href' => '/BreadBreak/contact.php', 'page' => 'contact.php'],
 ];
@@ -44,6 +45,9 @@ $isOrderStatusPage = $currentPage === 'order-status.php';
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title><?php echo isset($pageTitle) ? $pageTitle : 'BreadBreak'; ?></title>
     <meta name="description" content="BreadBreak bakery ordering and inventory management system homepage." />
+    <?php foreach (($headPreloads ?? []) as $headPreload): ?>
+    <link rel="preload" as="image" href="<?php echo htmlspecialchars($headPreload); ?>" />
+    <?php endforeach; ?>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -72,8 +76,13 @@ $isOrderStatusPage = $currentPage === 'order-status.php';
 
             <div class="header-tools">
                 <?php if ($isCustomerHeader): ?>
-                <a href="/BreadBreak/customer/order-status.php" class="customer-header-icon<?php echo $isOrderStatusPage ? ' is-active' : ''; ?>" aria-label="Order status" title="Order Status">
-                    <i class="fa-solid fa-bread-slice"></i>
+                <a href="/BreadBreak/moments.php" class="customer-header-icon has-label<?php echo $currentPage === 'moments.php' ? ' is-active' : ''; ?>" aria-label="BreadMoments" title="BreadMoments">
+                    <i class="fa-solid fa-camera-retro"></i>
+                    <span class="customer-header-icon-label">Moments</span>
+                </a>
+                <a href="/BreadBreak/customer/order-status.php" class="customer-header-icon has-label<?php echo $isOrderStatusPage ? ' is-active' : ''; ?>" aria-label="My Orders" title="My Orders">
+                    <i class="fa-solid fa-receipt"></i>
+                    <span class="customer-header-icon-label">My Orders</span>
                     <?php if ($headerActiveOrders > 0): ?>
                         <span class="cart-count"><?php echo $headerActiveOrders > 9 ? '9+' : $headerActiveOrders; ?></span>
                     <?php endif; ?>
@@ -81,8 +90,8 @@ $isOrderStatusPage = $currentPage === 'order-status.php';
                 <a href="/BreadBreak/customer/account.php" class="customer-profile-button" aria-label="Open My Account" title="My Account"><?php if ($customerProfileImage): ?><img src="<?php echo htmlspecialchars($customerProfileImage); ?>" alt="Profile photo" /><?php else: ?><span aria-hidden="true"><?php echo htmlspecialchars($customerInitial); ?></span><?php endif; ?></a>
                 <?php endif; ?>
                 <?php if ($showCartIcon): ?>
-                <a href="/BreadBreak/cart.php" class="cart-button" aria-label="Shopping cart" title="Shopping cart">
-                    <i class="fa-solid fa-cart-shopping"></i><span class="cart-count" data-cart-count><?php echo (int) $headerCartCount; ?></span>
+                <a href="/BreadBreak/cart.php" class="cart-button" aria-label="Shopping bag" title="My Bag">
+                    <i class="fa-solid fa-bag-shopping"></i><span class="cart-count" data-cart-count><?php echo (int) $headerCartCount; ?></span>
                 </a>
                 <?php endif; ?>
                 <?php if ($isCustomerHeader): ?><a href="/BreadBreak/logout.php" class="btn btn-outline"><i class="fa-solid fa-right-from-bracket"></i> Logout</a><?php else: ?><a href="/BreadBreak/login.php" class="btn btn-outline"><i class="fa-solid fa-right-to-bracket"></i> Login</a><?php endif; ?>

@@ -28,6 +28,13 @@ $errors = [];
 $successMessage = ($_GET['logged_out'] ?? '') === '1' ? 'You have been logged out.' : '';
 $selectedAccountType = $_POST['account_type'] ?? '';
 
+// Optional return target set by the cart / checkout / heart-tap pages.
+$allowedRedirects = ['cart', 'checkout', 'favorites', 'discount-ids', 'moments'];
+$redirectTarget = $_POST['redirect'] ?? $_GET['redirect'] ?? '';
+if (!is_string($redirectTarget) || !in_array($redirectTarget, $allowedRedirects, true)) {
+    $redirectTarget = '';
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $accountType = trim($_POST['account_type'] ?? '');
     $identifier = trim($_POST['identifier'] ?? '');
@@ -82,7 +89,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     if ($user['role'] === 'customer') {
                         $pdo->exec('CREATE TABLE IF NOT EXISTS customer_cart (user_id INT NOT NULL, variant_id INT NOT NULL, quantity INT NOT NULL DEFAULT 0, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (user_id, variant_id), CONSTRAINT fk_customer_cart_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, CONSTRAINT fk_customer_cart_variant FOREIGN KEY (variant_id) REFERENCES inventory_item_variants(id) ON DELETE CASCADE)');
-                        $savedCartStatement = $pdo->prepare('SELECT variant_id, quantity FROM customer_cart WHERE user_id = :user_id');
+
+                        // Drop rows for variants that no longer exist / are out of stock so
+                        // the bag badge never shows "ghost" items after sign-in.
+                        $pdo->prepare(
+                            'DELETE c FROM customer_cart c
+                             LEFT JOIN inventory_item_variants v
+                                    ON v.id = c.variant_id
+                                   AND v.availability = \'available\'
+                                   AND v.quantity > 0
+                             WHERE c.user_id = :user_id AND v.id IS NULL'
+                        )->execute(['user_id' => (int) $user['id']]);
+
+                        // Only bring back what is still buyable, capped at the current stock.
+                        $savedCartStatement = $pdo->prepare(
+                            'SELECT c.variant_id, LEAST(c.quantity, v.quantity) AS quantity
+                             FROM customer_cart c
+                             JOIN inventory_item_variants v ON v.id = c.variant_id
+                             WHERE c.user_id = :user_id
+                               AND v.availability = \'available\'
+                               AND v.quantity > 0'
+                        );
                         $savedCartStatement->execute(['user_id' => (int) $user['id']]);
                         foreach ($savedCartStatement->fetchAll() as $savedItem) {
                             $_SESSION['cart'][(int) $savedItem['variant_id']] = (int) $savedItem['quantity'];
@@ -104,7 +131,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         exit;
                     }
 
-                    header('Location: /BreadBreak/customer/menu_dashboard.php');
+                    // Customers who came from the cart / checkout flow land on their cart,
+                    // never on the dashboard, and get a confirmation message.
+                    $customerDestination = '/BreadBreak/customer/menu_dashboard.php';
+                    if ($redirectTarget === 'cart') {
+                        $customerDestination = '/BreadBreak/cart.php';
+                        $_SESSION['cart_notice'] = 'Welcome back, ' . $_SESSION['first_name'] . '! Your cart is ready.';
+                    } elseif ($redirectTarget === 'checkout') {
+                        $customerDestination = '/BreadBreak/cart.php';
+                        $_SESSION['cart_notice'] = 'Welcome back, ' . $_SESSION['first_name'] . '! Review your order, then continue to checkout.';
+                    } elseif ($redirectTarget === 'favorites') {
+                        // Came from a heart tap — land straight on My Favorites.
+                        $customerDestination = '/BreadBreak/customer/account.php?panel=my-favorites';
+                    } elseif ($redirectTarget === 'discount-ids') {
+                        $customerDestination = '/BreadBreak/customer/account.php?panel=discount-ids';
+                    } elseif ($redirectTarget === 'moments') {
+                        // Came from BreadMoments — land on the feed, never the dashboard.
+                        $customerDestination = '/BreadBreak/moments.php';
+                        $_SESSION['moments_notice'] = 'Welcome back, ' . $_SESSION['first_name'] . '! Tap “Create Post” to share your BreadMoment.';
+                    }
+
+                    header('Location: ' . $customerDestination);
                     exit;
                 }
             }
@@ -151,8 +198,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <p>Sign in to continue to BreadBreak.</p>
                 </div>
                 <?php if ($successMessage): ?><div class="form-status success" role="status"><?php echo htmlspecialchars($successMessage); ?></div><?php endif; ?>
+                <?php if ($redirectTarget === 'checkout'): ?><div class="form-status success" role="status">Sign in to continue — we'll take you back to your cart so you can finish checking out.</div><?php elseif ($redirectTarget === 'cart'): ?><div class="form-status success" role="status">Sign in to continue — we'll take you straight to your cart.</div><?php endif; ?>
 
                 <form class="auth-form" method="POST" novalidate data-form-type="login">
+                    <input type="hidden" name="redirect" value="<?php echo htmlspecialchars($redirectTarget); ?>" />
                     <div class="field-group">
                         <label for="account_type">Select Account Type</label>
                         <div class="custom-select-wrap">

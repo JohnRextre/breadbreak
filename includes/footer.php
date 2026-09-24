@@ -10,6 +10,7 @@
                 <ul class="footer-links">
                     <li><a href="/BreadBreak/index.php">Home</a></li>
                     <li><a href="/BreadBreak/menu.php">Shop</a></li>
+                    <li><a href="/BreadBreak/moments.php">BreadMoments</a></li>
                     <li><a href="/BreadBreak/about.php">About Us</a></li>
                     <li><a href="/BreadBreak/contact.php">Contact</a></li>
                 </ul>

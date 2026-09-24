@@ -58,6 +58,7 @@ body.staff-body { --admin-brown: #7b523b; }
 .photo-drop strong { color: var(--admin-brown); font-size: 13px; }
 .photo-drop small { margin-top: 5px; font-size: 10px; }
 .photo-filename { color: var(--admin-brown-dark); font-size: 11px; }
+.field-help { color: var(--admin-muted); font-size: 10.5px; line-height: 1.5; }
 .item-detail-grid { display: grid; grid-template-columns: 110px 1fr; gap: 20px; }
 .view-item-modal { width: min(920px, 95vw); }
 .view-item-modal .item-overview { display: grid; grid-template-columns: 180px 1fr; gap: 24px; align-items: start; }

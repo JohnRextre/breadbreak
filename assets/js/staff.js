@@ -223,6 +223,10 @@ document.addEventListener('DOMContentLoaded', function () {
                 document.querySelectorAll('#edit-menu-modal .menu-id').forEach(function (input) { input.value = menuId; });
                 const nameInput = document.getElementById('edit-menu-name');
                 if (nameInput) nameInput.value = menuName;
+                const menuPhotoInput = document.getElementById('menu-photo-edit');
+                if (menuPhotoInput) menuPhotoInput.value = '';
+                const menuPhotoName = document.querySelector('[data-photo-name="menu-edit"]');
+                if (menuPhotoName) menuPhotoName.textContent = button.dataset.menuHasPhoto === '1' ? 'Current photo attached' : 'No photo selected';
                 openModal('edit-menu-modal');
             } else if (action === 'delete') {
                 document.querySelectorAll('#delete-menu-modal .menu-id').forEach(function (input) { input.value = menuId; });
