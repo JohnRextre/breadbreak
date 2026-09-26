@@ -9,6 +9,7 @@
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/xendit.php';
+require_once __DIR__ . '/../includes/order_status.php';
 
 function logWebhook(string $message, array $context = []): void
 {
@@ -125,6 +126,11 @@ try {
 
     $orderId = (int) $payment['order_id'];
     $rawJson = json_encode($payload);
+    $actor = [
+        'actor_id' => null,
+        'actor_role' => 'system',
+        'actor_name' => 'Xendit',
+    ];
 
     $pdo->beginTransaction();
 
@@ -140,42 +146,51 @@ try {
     ]);
 
     if ($dbPaymentStatus === 'paid') {
-        // 2. Update order status to processing
-        $pdo->prepare(
-            "UPDATE orders SET status = 'processing', updated_at = NOW() WHERE id = :oid"
-        )->execute(['oid' => $orderId]);
+        // 2. Payment received → the order starts baking on its own. Staff never
+        //    touch this for online payments.
+        $orderRow = $pdo->prepare('SELECT status FROM orders WHERE id = :oid LIMIT 1');
+        $orderRow->execute(['oid' => $orderId]);
+        $previousStatus = (string) ($orderRow->fetchColumn() ?: 'pending');
 
-        // 3. Deduct stock for each order item — clamp to 0, never negative
-        $items = $pdo->prepare(
-            "SELECT variant_id, quantity FROM order_items WHERE order_id = :oid"
-        );
-        $items->execute(['oid' => $orderId]);
-
-        $deduct = $pdo->prepare(
-            "UPDATE inventory_item_variants
-             SET quantity = GREATEST(0, quantity - :qty)
-             WHERE id = :vid"
-        );
-        foreach ($items->fetchAll() as $item) {
-            $deduct->execute([
-                'qty' => (int) $item['quantity'],
-                'vid' => (int) $item['variant_id'],
-            ]);
+        if ($previousStatus === 'pending') {
+            $pdo->prepare(
+                "UPDATE orders SET status = 'processing', updated_at = NOW() WHERE id = :oid"
+            )->execute(['oid' => $orderId]);
+            logOrderStatusChange(
+                $pdo,
+                $orderId,
+                'pending',
+                'processing',
+                $actor,
+                'Payment confirmed via Xendit — baking started automatically.'
+            );
         }
 
-        // 4. Mark variants as unavailable if stock hits 0
-        $pdo->prepare(
-            "UPDATE inventory_item_variants
-             SET availability = 'unavailable'
-             WHERE id IN (SELECT variant_id FROM order_items WHERE order_id = :oid)
-               AND quantity = 0"
-        )->execute(['oid' => $orderId]);
-
+        // 3. Deduct stock for each order item — clamp to 0, never negative
+        deductOrderStock($pdo, $orderId);
     } else {
         // Payment failed / expired / voided → cancel order
-        $pdo->prepare(
-            "UPDATE orders SET status = 'cancelled', updated_at = NOW() WHERE id = :oid"
-        )->execute(['oid' => $orderId]);
+        $orderRow = $pdo->prepare('SELECT status FROM orders WHERE id = :oid LIMIT 1');
+        $orderRow->execute(['oid' => $orderId]);
+        $previousStatus = (string) ($orderRow->fetchColumn() ?: 'pending');
+
+        if (!in_array($previousStatus, ['completed', 'cancelled'], true)) {
+            $pdo->prepare(
+                "UPDATE orders
+                 SET status = 'cancelled', updated_at = NOW(),
+                     chat_closed_at = IFNULL(chat_closed_at, NOW()),
+                     chat_closed_by = IFNULL(chat_closed_by, 'system')
+                 WHERE id = :oid"
+            )->execute(['oid' => $orderId]);
+            logOrderStatusChange(
+                $pdo,
+                $orderId,
+                $previousStatus,
+                'cancelled',
+                $actor,
+                'Payment ' . $dbPaymentStatus . ' via Xendit.'
+            );
+        }
     }
 
     $pdo->commit();

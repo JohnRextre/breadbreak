@@ -4,7 +4,9 @@ $staffNavigation = [
         ['dashboard', 'Dashboard', 'grid'],
         ['inventory', 'Inventory', 'box'],
         ['orders', 'Orders', 'clipboard'],
+        ['order-history', 'Order History', 'history'],
         ['reports', 'Reports & Analytics', 'chart'],
+        ['moments', 'BreadMoments', 'moments'],
     ],
     'account' => [
         ['profile', 'My Account', 'profile'],
@@ -14,7 +16,9 @@ $staffIcons = [
     'grid' => '<i class="fa-solid fa-table-cells-large"></i>',
     'box' => '<i class="fa-solid fa-boxes-stacked"></i>',
     'clipboard' => '<i class="fa-solid fa-receipt"></i>',
+    'history' => '<i class="fa-solid fa-clock-rotate-left"></i>',
     'chart' => '<i class="fa-solid fa-chart-line"></i>',
+    'moments' => '<i class="fa-solid fa-bullhorn"></i>',
     'profile' => '<i class="fa-solid fa-circle-user"></i>',
     'logout' => '<i class="fa-solid fa-right-from-bracket"></i>',
 ];

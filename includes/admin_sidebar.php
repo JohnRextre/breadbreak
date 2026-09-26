@@ -6,6 +6,7 @@ $navigation = [
         ['inventory', 'Inventory', 'box'],
         ['orders', 'Orders', 'clipboard'],
         ['reports', 'Reports & Analytics', 'chart'],
+        ['moments', 'BreadMoments', 'moments'],
     ],
     'system' => [
         ['logs', 'System Logs', 'activity'],
@@ -22,6 +23,7 @@ $icons = [
     'box' => '<i class="fa-solid fa-boxes-stacked"></i>',
     'clipboard' => '<i class="fa-solid fa-receipt"></i>',
     'chart' => '<i class="fa-solid fa-chart-line"></i>',
+    'moments' => '<i class="fa-solid fa-camera-retro"></i>',
     'activity' => '<i class="fa-solid fa-clock-rotate-left"></i>',
     'settings' => '<i class="fa-solid fa-gear"></i>',
     'profile' => '<i class="fa-solid fa-circle-user"></i>',

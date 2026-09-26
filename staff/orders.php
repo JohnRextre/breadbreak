@@ -1,10 +1,18 @@
 <?php
+/**
+ * Staff Orders — in-process only.
+ *
+ * Orders that still need attention: waiting for payment/acceptance, baking, on the
+ * way, or waiting for pickup. Anything delivered or cancelled lives in
+ * staff/order-history.php.
+ */
 require_once __DIR__ . '/../includes/auth.php';
 requireRole('staff');
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../includes/order_status.php';
 require_once __DIR__ . '/../includes/rider.php';
+require_once __DIR__ . '/../includes/staff_orders.php';
 
 $pageTitle = 'Orders';
 $activePage = 'orders';
@@ -12,344 +20,474 @@ $activePage = 'orders';
 $pdo = getDatabaseConnection();
 ensureOrderStatusEnum($pdo);
 ensureRiderSupport($pdo);
+ensureOrderStatusHistory($pdo);
 
 $riders = activeRiders($pdo);
+$actor = orderActor();
+$inProcess = inProcessOrderStatuses();
 
-// Handle status update by staff
+// ─────────────────────────────────────────────────────────────────────────────
+// Actions
+// ─────────────────────────────────────────────────────────────────────────────
 $statusSuccess = '';
 $statusError = '';
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && in_array($_POST['action'], ['update_status', 'assign_rider'], true)) {
+$cancelReasons = orderCancelReasons();
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    $action = (string) $_POST['action'];
     $orderId = (int) ($_POST['order_id'] ?? 0);
-    $newStatus = trim($_POST['status'] ?? '');
-    $postedRider = (int) ($_POST['rider_id'] ?? 0);
-    $allowedStatuses = allowedOrderStatuses();
 
-    $currentStmt = $pdo->prepare('SELECT id, reference_id, status, fulfillment_type, rider_id FROM orders WHERE id = :id LIMIT 1');
-    $currentStmt->execute(['id' => $orderId]);
-    $currentOrder = $currentStmt->fetch();
+    $lookup = $pdo->prepare(
+        'SELECT id, reference_id, status, fulfillment_type, rider_id, payment_method, customer_id
+         FROM orders WHERE id = :id LIMIT 1'
+    );
+    $lookup->execute(['id' => $orderId]);
+    $order = $lookup->fetch();
 
-    if (!$currentOrder) {
+    if (!$order) {
         $statusError = 'Order was not found.';
     } else {
-        $fulfillment = $currentOrder['fulfillment_type'] ?? 'delivery';
-        $nextStatus = $newStatus !== '' && in_array($newStatus, $allowedStatuses, true) ? $newStatus : $currentOrder['status'];
-        $riderId = $fulfillment === 'delivery' ? ($postedRider > 0 ? $postedRider : (int) $currentOrder['rider_id']) : 0;
+        $fulfillment = $order['fulfillment_type'] ?? 'delivery';
+        $ref = $order['reference_id'];
 
-        if ($fulfillment === 'delivery' && $nextStatus === 'out_for_delivery' && $riderId <= 0) {
-            $statusError = 'Assign a rider before marking this order On the Way.';
-        } else {
-            try {
-                $updateStmt = $pdo->prepare("UPDATE orders SET status = :status, rider_id = :rider_id, updated_at = NOW() WHERE id = :id");
-                $updateStmt->execute([
-                    'status' => $nextStatus,
-                    'rider_id' => $riderId > 0 ? $riderId : null,
-                    'id' => $orderId,
-                ]);
-                $statusSuccess = "Order #" . htmlspecialchars($currentOrder['reference_id']) . " updated.";
-            } catch (Throwable $e) {
-                $statusError = "Unable to update order.";
+        if ($action === 'accept_order') {
+            $result = applyOrderStatus(
+                $pdo,
+                $orderId,
+                'processing',
+                $actor,
+                'Cash order accepted by the bakery — stock committed.'
+            );
+
+            if (!$result['ok']) {
+                $statusError = $result['error'];
+            } else {
+                $pdo->beginTransaction();
+                try {
+                    deductOrderStock($pdo, $orderId);
+                    $pdo->commit();
+                } catch (Throwable) {
+                    $pdo->rollBack();
+                }
+                $statusSuccess = 'Order #' . $ref . ' accepted and moved to Baking.';
             }
+
+        } elseif ($action === 'assign_rider') {
+            $riderId = (int) ($_POST['rider_id'] ?? 0);
+            $riderName = '';
+            foreach ($riders as $candidate) {
+                if ((int) $candidate['id'] === $riderId) {
+                    $riderName = riderDisplayName($candidate);
+                    break;
+                }
+            }
+
+            if ($fulfillment === 'pickup') {
+                $statusError = 'Store pickup orders do not need a rider.';
+            } elseif ($riderId <= 0 || $riderName === '') {
+                $statusError = 'Choose a rider to assign.';
+            } else {
+                $previousRider = (int) $order['rider_id'];
+                $pdo->prepare('UPDATE orders SET rider_id = :rid, updated_at = NOW() WHERE id = :id')
+                    ->execute(['rid' => $riderId, 'id' => $orderId]);
+
+                if ($order['status'] === 'processing') {
+                    // Assigning a rider is the trigger: no separate "On the Way" step.
+                    $result = applyOrderStatus(
+                        $pdo,
+                        $orderId,
+                        'out_for_delivery',
+                        $actor,
+                        $riderName . ' assigned — the order is now on the way.',
+                        ['rider_id' => $riderId]
+                    );
+                    $statusSuccess = $result['ok']
+                        ? $riderName . ' assigned to order #' . $ref . ' — now on the way.'
+                        : 'Rider assigned to order #' . $ref . '.';
+                    if (!$result['ok']) {
+                        $statusError = $result['error'];
+                    }
+                } else {
+                    logOrderStatusChange(
+                        $pdo,
+                        $orderId,
+                        $order['status'],
+                        $order['status'],
+                        $actor,
+                        $previousRider > 0
+                            ? 'Rider changed to ' . $riderName . '.'
+                            : $riderName . ' assigned.'
+                    );
+                    $statusSuccess = $riderName . ' assigned to order #' . $ref . '.';
+                }
+            }
+
+        } elseif ($action === 'send_on_the_way') {
+            $result = applyOrderStatus(
+                $pdo,
+                $orderId,
+                'out_for_delivery',
+                $actor,
+                'Marked on the way by staff.',
+                ['rider_id' => (int) $order['rider_id']]
+            );
+            if ($result['ok']) {
+                $statusSuccess = 'Order #' . $ref . ' is now on the way.';
+            } else {
+                $statusError = $result['error'];
+            }
+
+        } elseif ($action === 'cancel_order') {
+            $reason = trim((string) ($_POST['reason'] ?? ''));
+            $result = applyOrderStatus($pdo, $orderId, 'cancelled', $actor, $reason);
+
+            if ($result['ok']) {
+                $statusSuccess = 'Order #' . $ref . ' cancelled — ' . $reason . '.';
+            } else {
+                $statusError = $result['error'];
+            }
+
+        } elseif ($action === 'update_status' || $action === 'assign_rider_legacy') {
+            $statusError = 'Orders no longer use a manual status picker. Use Accept, Assign Rider, or Cancel.';
         }
     }
 }
 
-// Search and filter parameters
+// ─────────────────────────────────────────────────────────────────────────────
+// List — in-process only
+// ─────────────────────────────────────────────────────────────────────────────
 $search = trim($_GET['search'] ?? '');
-$statusFilter = trim($_GET['status'] ?? 'all');
+$paymentFilter = trim($_GET['payment'] ?? '');
+$riderFilter = trim($_GET['rider'] ?? '');
 
-$query = "SELECT o.id, o.reference_id, o.status AS order_status, o.created_at,
-                 o.fulfillment_type, o.delivery_fee, o.delivery_address, o.discount_type, o.discount_amount, o.discount_id_number, o.discount_name,
-                 o.rider_id, o.payment_method, o.total_amount,
-                 u.first_name, u.last_name, u.email, u.phone,
-                 p.amount, p.payment_method AS pay_method, p.payment_channel, p.status AS payment_status,
-                 r.first_name AS rider_first, r.last_name AS rider_last
-          FROM orders o
-          JOIN users u ON u.id = o.customer_id
-          LEFT JOIN payments p ON p.order_id = o.id
-          LEFT JOIN users r ON r.id = o.rider_id
-          WHERE 1=1";
+[$where, $params] = orderFilterClause($inProcess, $search, $paymentFilter, $riderFilter, '', '');
 
-$params = [];
+$sortMap = [
+    'newest' => 'o.created_at DESC',
+    'oldest' => 'o.created_at ASC',
+    'total_desc' => 'o.total_amount DESC',
+    'total_asc' => 'o.total_amount ASC',
+];
+$sort = array_key_exists($_GET['sort'] ?? '', $sortMap) ? $_GET['sort'] : 'newest';
 
-if ($statusFilter !== 'all' && in_array($statusFilter, allowedOrderStatuses(), true)) {
-    $query .= " AND o.status = :status";
-    $params['status'] = $statusFilter;
-}
-
-if ($search !== '') {
-    $query .= " AND (o.reference_id LIKE :search OR u.first_name LIKE :search OR u.last_name LIKE :search OR u.email LIKE :search)";
-    $params['search'] = '%' . $search . '%';
-}
-
-$query .= " ORDER BY o.id DESC";
+$query = orderSelectSql($where)
+    . " GROUP BY o.id, p.id"
+    . " ORDER BY FIELD(o.status, 'pending', 'processing', 'out_for_delivery', 'ready_for_pickup'), "
+    . $sortMap[$sort];
 
 $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $orders = $stmt->fetchAll();
 
-// Fetch items for all visible orders
 $orderIds = array_column($orders, 'id');
-$orderItemsMap = [];
-if (!empty($orderIds)) {
-    $inPlaceholders = implode(',', array_fill(0, count($orderIds), '?'));
+$itemsMap = [];
+if ($orderIds) {
+    $in = implode(',', array_fill(0, count($orderIds), '?'));
     $itemsStmt = $pdo->prepare(
         "SELECT order_id, product_name, service_size, sku, unit_price, quantity, line_total
-         FROM order_items
-         WHERE order_id IN ($inPlaceholders)
-         ORDER BY id ASC"
+         FROM order_items WHERE order_id IN ($in) ORDER BY id ASC"
     );
     $itemsStmt->execute($orderIds);
     foreach ($itemsStmt->fetchAll() as $item) {
-        $orderItemsMap[$item['order_id']][] = $item;
+        $itemsMap[(int) $item['order_id']][] = $item;
     }
 }
 
-// Summary counts
-$totalOrders = (int) $pdo->query("SELECT COUNT(*) FROM orders")->fetchColumn();
-$processingOrders = (int) $pdo->query("SELECT COUNT(*) FROM orders WHERE status = 'processing'")->fetchColumn();
-$completedOrders = (int) $pdo->query("SELECT COUNT(*) FROM orders WHERE status = 'completed'")->fetchColumn();
-$paidOrders = (int) $pdo->query("SELECT COUNT(*) FROM payments WHERE status = 'paid'")->fetchColumn();
+$historyMap = orderStatusHistoryMap($pdo, $orders);
+
+// Tiles describe the whole in-process pipeline, not just the filtered page.
+$countOf = static function (string $status) use ($pdo): int {
+    $s = $pdo->prepare('SELECT COUNT(*) FROM orders WHERE status = :s');
+    $s->execute(['s' => $status]);
+    return (int) $s->fetchColumn();
+};
+$awaiting = $countOf('pending');
+$baking = $countOf('processing');
+$onTheWay = $countOf('out_for_delivery');
+$readyForPickup = $countOf('ready_for_pickup');
+$inProcessTotal = $awaiting + $baking + $onTheWay + $readyForPickup;
+$closedTotal = (int) $pdo->query("SELECT COUNT(*) FROM orders WHERE status IN ('completed','cancelled')")->fetchColumn();
+
+$hasFilters = $search !== '' || $paymentFilter !== '' || $riderFilter !== '';
 
 require __DIR__ . '/../includes/staff_header.php';
 ?>
 
-<section class="page-intro inventory-page-intro" style="margin-bottom: 22px;">
+<section class="page-intro users-page-intro inventory-page-intro">
     <div>
-        <span class="eyebrow" style="font-size: 11px; font-weight: 800; color: var(--admin-brown); letter-spacing: 0.1em; text-transform: uppercase;">Bakery Fulfillment</span>
-        <h2 style="margin: 4px 0 6px; font-family: 'Manrope', sans-serif; font-size: 26px; color: var(--admin-ink);">Customer Orders</h2>
-        <p style="margin: 0; color: var(--admin-muted); font-size: 13px;">Review customer purchases, monitor real-time Xendit payments, and update order statuses.</p>
+        <span class="eyebrow">Bakery Fulfillment</span>
+        <h2>Orders</h2>
+        <p>Orders that still need work. Everything delivered or cancelled moves to Order History.</p>
     </div>
 </section>
 
-<!-- Summary Cards Grid -->
 <section class="orders-summary-grid">
-    <article class="summary-card">
+    <a class="summary-card is-link <?php echo $awaiting ? 'is-warn' : ''; ?>" href="<?php echo BASE_URL; ?>/staff/orders.php?status=pending">
         <div class="summary-top">
-            <span>Total Orders</span>
-            <div class="summary-icon" style="background: rgba(123, 82, 59, 0.1); color: var(--admin-brown);">
-                <i class="fa-solid fa-receipt"></i>
-            </div>
+            <span>Needs action</span>
+            <div class="summary-icon" style="background: rgba(201,121,64,.12); color: #c97940;"><i class="fa-solid fa-bell"></i></div>
         </div>
-        <div class="summary-value"><?php echo $totalOrders; ?></div>
-    </article>
-    <article class="summary-card">
+        <div class="summary-value" style="color: #c97940;"><?php echo $awaiting; ?></div>
+    </a>
+    <div class="summary-card">
         <div class="summary-top">
-            <span>Processing</span>
-            <div class="summary-icon" style="background: rgba(32, 82, 168, 0.1); color: #2052a8;">
-                <i class="fa-solid fa-clock-rotate-left"></i>
-            </div>
+            <span>In the kitchen</span>
+            <div class="summary-icon" style="background: rgba(32,82,168,.1); color: #2052a8;"><i class="fa-solid fa-bread-slice"></i></div>
         </div>
-        <div class="summary-value" style="color: #2052a8;"><?php echo $processingOrders; ?></div>
-    </article>
-    <article class="summary-card">
+        <div class="summary-value" style="color: #2052a8;"><?php echo $baking; ?></div>
+    </div>
+    <div class="summary-card">
         <div class="summary-top">
-            <span>Completed</span>
-            <div class="summary-icon" style="background: rgba(40, 160, 103, 0.1); color: #28a067;">
-                <i class="fa-solid fa-circle-check"></i>
-            </div>
+            <span>On the way</span>
+            <div class="summary-icon" style="background: rgba(154,93,10,.1); color: #9a5d0a;"><i class="fa-solid fa-motorcycle"></i></div>
         </div>
-        <div class="summary-value" style="color: #28a067;"><?php echo $completedOrders; ?></div>
-    </article>
-    <article class="summary-card">
+        <div class="summary-value" style="color: #9a5d0a;"><?php echo $onTheWay; ?></div>
+    </div>
+    <div class="summary-card">
         <div class="summary-top">
-            <span>Paid via Xendit</span>
-            <div class="summary-icon" style="background: rgba(201, 121, 64, 0.12); color: #c97940;">
-                <i class="fa-solid fa-mobile-screen-button"></i>
-            </div>
+            <span>Ready for pickup</span>
+            <div class="summary-icon" style="background: rgba(31,157,99,.1); color: #1a6645;"><i class="fa-solid fa-store"></i></div>
         </div>
-        <div class="summary-value" style="color: var(--admin-brown);"><?php echo $paidOrders; ?></div>
-    </article>
+        <div class="summary-value" style="color: #1a6645;"><?php echo $readyForPickup; ?></div>
+    </div>
 </section>
 
 <?php if ($statusSuccess): ?>
-    <div class="admin-notice success" style="margin-bottom: 20px;"><i class="fa-solid fa-circle-check"></i> <?php echo $statusSuccess; ?></div>
+    <div class="admin-notice success" style="margin-bottom:20px;"><i class="fa-solid fa-circle-check"></i> <?php echo $statusSuccess; ?></div>
 <?php endif; ?>
 <?php if ($statusError): ?>
-    <div class="admin-notice danger" style="margin-bottom: 20px;"><i class="fa-solid fa-circle-exclamation"></i> <?php echo $statusError; ?></div>
+    <div class="admin-notice danger" style="margin-bottom:20px;"><i class="fa-solid fa-circle-exclamation"></i> <?php echo $statusError; ?></div>
 <?php endif; ?>
 
-<!-- Main Orders Panel -->
-<section class="panel" style="background: #fff; border: 1px solid var(--admin-line); border-radius: 14px; padding: 24px; box-shadow: 0 4px 20px rgba(39, 29, 23, 0.04);">
+<section class="panel">
     <form method="GET" class="orders-filter-bar">
         <div class="search-box">
             <i class="fa-solid fa-magnifying-glass"></i>
-            <input type="search" name="search" placeholder="Search by order #, customer name, email..." value="<?php echo htmlspecialchars($search); ?>" />
+            <input type="search" name="search" placeholder="Search order #, customer, phone, item or SKU..." value="<?php echo htmlspecialchars($search); ?>" />
         </div>
         <div class="filter-actions">
-            <div class="select-control" style="margin: 0;">
-                <select name="status" onchange="this.form.submit()" style="height: 42px; border-radius: 8px; border: 1px solid var(--admin-line); padding: 0 32px 0 12px; font-size: 13px; font-weight: 600; color: var(--admin-ink);">
-                    <option value="all" <?php echo $statusFilter === 'all' ? 'selected' : ''; ?>>All Statuses</option>
-                    <option value="pending" <?php echo $statusFilter === 'pending' ? 'selected' : ''; ?>>Received</option>
-                    <option value="processing" <?php echo $statusFilter === 'processing' ? 'selected' : ''; ?>>Baking</option>
-                    <option value="out_for_delivery" <?php echo $statusFilter === 'out_for_delivery' ? 'selected' : ''; ?>>On the Way</option>
-                    <option value="ready_for_pickup" <?php echo $statusFilter === 'ready_for_pickup' ? 'selected' : ''; ?>>Ready for Pickup</option>
-                    <option value="completed" <?php echo $statusFilter === 'completed' ? 'selected' : ''; ?>>Completed</option>
-                    <option value="cancelled" <?php echo $statusFilter === 'cancelled' ? 'selected' : ''; ?>>Cancelled</option>
+            <div class="select-control" style="margin:0;">
+                <select name="sort" onchange="this.form.submit()" aria-label="Sort">
+                    <option value="newest" <?php echo $sort === 'newest' ? 'selected' : ''; ?>>Newest first</option>
+                    <option value="oldest" <?php echo $sort === 'oldest' ? 'selected' : ''; ?>>Oldest first</option>
+                    <option value="total_desc" <?php echo $sort === 'total_desc' ? 'selected' : ''; ?>>Highest total</option>
+                    <option value="total_asc" <?php echo $sort === 'total_asc' ? 'selected' : ''; ?>>Lowest total</option>
                 </select>
             </div>
-            <button type="submit" class="admin-button primary" style="height: 42px; border-radius: 8px; padding: 0 18px;">
+            <div class="select-control" style="margin:0;">
+                <select name="payment" onchange="this.form.submit()" aria-label="Payment method">
+                    <option value="">All payments</option>
+                    <option value="online" <?php echo $paymentFilter === 'online' ? 'selected' : ''; ?>>Online / e-wallet</option>
+                    <option value="cash" <?php echo $paymentFilter === 'cash' ? 'selected' : ''; ?>>Cash</option>
+                    <?php foreach (['GCASH' => 'GCash', 'PAYMAYA' => 'PayMaya', 'GRABPAY' => 'GrabPay', 'SHOPEEPAY' => 'Shopee Pay'] as $value => $label): ?>
+                        <option value="<?php echo $value; ?>" <?php echo $paymentFilter === $value ? 'selected' : ''; ?>><?php echo $label; ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="select-control" style="margin:0;">
+                <select name="rider" onchange="this.form.submit()" aria-label="Rider">
+                    <option value="">All riders</option>
+                    <option value="unassigned" <?php echo $riderFilter === 'unassigned' ? 'selected' : ''; ?>>Unassigned</option>
+                    <?php foreach ($riders as $rider): ?>
+                        <option value="<?php echo (int) $rider['id']; ?>" <?php echo $riderFilter === (string) $rider['id'] ? 'selected' : ''; ?>>
+                            <?php echo htmlspecialchars(riderDisplayName($rider)); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <button type="submit" class="admin-button primary" style="height:42px; border-radius:8px; padding:0 18px;">
                 <i class="fa-solid fa-filter"></i> Filter
             </button>
-            <?php if ($search !== '' || $statusFilter !== 'all'): ?>
-                <a href="orders.php" class="admin-button secondary" style="height: 42px; border-radius: 8px; padding: 0 16px;">
+            <?php if ($hasFilters): ?>
+                <a href="orders.php" class="admin-button secondary" style="height:42px; border-radius:8px; padding:0 16px;">
                     <i class="fa-solid fa-rotate-left"></i> Reset
                 </a>
             <?php endif; ?>
+            <a href="<?php echo BASE_URL; ?>/staff/order-history.php" class="admin-button secondary" style="height:42px; border-radius:8px; padding:0 16px;">
+                <i class="fa-solid fa-clock-rotate-left"></i> History (<?php echo $closedTotal; ?>)
+            </a>
         </div>
     </form>
 
     <?php if (empty($orders)): ?>
-        <div class="empty-state" style="text-align: center; padding: 60px 20px;">
-            <div style="width: 64px; height: 64px; margin: 0 auto 16px; border-radius: 50%; background: #faf7f4; display: flex; align-items: center; justify-content: center; font-size: 26px; color: var(--admin-muted);">
-                <i class="fa-solid fa-basket-shopping"></i>
+        <div class="empty-state" style="text-align:center; padding:60px 20px;">
+            <div style="width:64px; height:64px; margin:0 auto 16px; border-radius:50%; background:#faf7f4; display:flex; align-items:center; justify-content:center; font-size:26px; color:var(--admin-muted);">
+                <i class="fa-solid fa-clipboard-check"></i>
             </div>
-            <h3 style="color: var(--admin-brown-dark); margin: 0 0 6px; font-size: 16px;">No orders found</h3>
-            <p style="color: var(--admin-muted); font-size: 13px; margin: 0;">There are no customer orders matching your search or status filter.</p>
+            <h3 style="color:var(--admin-brown-dark); margin:0 0 6px; font-size:16px;">
+                <?php echo $hasFilters ? 'No matching open orders' : 'No open orders'; ?>
+            </h3>
+            <p style="color:var(--admin-muted); font-size:13px; margin:0 0 1rem;">
+                <?php echo $hasFilters
+                    ? 'Try clearing the filters.'
+                    : 'Every order is delivered or cancelled. Nothing needs your attention right now.'; ?>
+            </p>
+            <?php if ($hasFilters): ?>
+                <a href="orders.php" class="admin-button secondary">Clear filters</a>
+            <?php else: ?>
+                <a href="<?php echo BASE_URL; ?>/staff/order-history.php" class="admin-button secondary">
+                    <i class="fa-solid fa-clock-rotate-left"></i> View Order History
+                </a>
+            <?php endif; ?>
         </div>
     <?php else: ?>
-        <div class="table-wrap" style="overflow-x: auto; border-radius: 10px; border: 1px solid var(--admin-line);">
-            <table class="orders-table">
+        <div class="table-wrap" style="overflow-x:auto; border-radius:10px; border:1px solid var(--admin-line);">
+            <table class="orders-table orders-table-slim">
+                <colgroup>
+                    <col style="width:19%;" /><col style="width:15%;" /><col style="width:14%;" />
+                    <col style="width:11%;" /><col style="width:22%;" /><col style="width:19%;" />
+                </colgroup>
                 <thead>
                     <tr>
-                        <th style="min-width: 170px;">Order Reference</th>
-                        <th style="min-width: 160px;">Customer</th>
-                        <th style="min-width: 250px;">Purchased Items</th>
-                        <th style="min-width: 130px;">Total Amount</th>
-                        <th style="min-width: 130px;">Payment</th>
-                        <th style="min-width: 130px;">Order Status</th>
-                        <th style="min-width: 160px;">Rider</th>
-                        <th style="min-width: 140px; text-align: right;">Update Status</th>
+                        <th>Order</th><th>Customer</th><th>Contents</th>
+                        <th>Payment</th><th>Status &amp; Last Activity</th><th class="is-action">Next Step</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php foreach ($orders as $o):
                         $oid = (int) $o['id'];
-                        $items = $orderItemsMap[$oid] ?? [];
-                        $payStatus = strtolower((string) ($o['payment_status'] ?? 'pending'));
+                        $items = $itemsMap[$oid] ?? [];
+                        $trail = $historyMap[$oid] ?? [];
+                        $lastEntry = $trail ? end($trail) : null;
                         $ordStatus = strtolower((string) $o['order_status']);
+                        $fulfillment = $o['fulfillment_type'] ?? 'delivery';
+                        $payStatus = strtolower((string) ($o['payment_status'] ?? 'pending'));
+                        $channel = (string) ($o['payment_channel'] ?? '');
+                        $isCash = orderIsCashPayment($o['payment_method'] ?? '', $channel);
+                        $payShort = orderPaymentLabelShort($o['payment_method'] ?? '', $channel);
+                        $chip = orderStatusChip($ordStatus, $fulfillment);
+                        $action = orderNextAction($o, $riders);
+                        $itemCount = count($items);
+                        $unitCount = array_sum(array_map(fn ($i) => (int) $i['quantity'], $items));
                     ?>
                     <tr>
                         <td>
                             <span class="order-ref-badge">
-                                <i class="fa-solid fa-receipt" style="font-size: 10px; opacity: 0.7;"></i>
-                                #<?php echo htmlspecialchars($o['reference_id']); ?>
+                                <i class="fa-solid fa-receipt"></i>#<?php echo htmlspecialchars($o['reference_id']); ?>
                             </span>
-                            <span class="order-date-text">
-                                <?php echo date('M d, Y · g:i A', strtotime($o['created_at'])); ?>
-                            </span>
-                            <?php if (!empty($o['discount_type']) && $o['discount_type'] !== 'none'): ?>
-                                <div style="margin-top: 5px;">
-                                    <span style="display: inline-block; background: #e8f7ef; color: #1a6645; border: 1px solid #a3d9bc; padding: 2px 6px; border-radius: 6px; font-size: 10px; font-weight: 700;">
-                                        <?php echo $o['discount_type'] === 'senior' ? '🧓 Senior 20%' : '♿ PWD 20%'; ?>
+                            <span class="order-date-text"><?php echo date('M j, Y · g:i A', strtotime($o['created_at'])); ?></span>
+                            <div class="order-tag-row">
+                                <?php if ($fulfillment === 'pickup'): ?>
+                                    <span class="order-mini-tag"><i class="fa-solid fa-store"></i> Pickup</span>
+                                <?php endif; ?>
+                                <?php if (!empty($o['discount_type']) && $o['discount_type'] !== 'none'): ?>
+                                    <span class="order-mini-tag is-discount">
+                                        <?php echo $o['discount_type'] === 'senior' ? 'Senior 20%' : 'PWD 20%'; ?>
                                     </span>
-                                    <small style="display: block; font-size: 10px; color: var(--admin-muted); margin-top: 2px;">
-                                        ID: <strong><?php echo htmlspecialchars($o['discount_id_number'] ?? '—'); ?></strong>
-                                    </small>
-                                </div>
-                            <?php endif; ?>
+                                <?php endif; ?>
+                            </div>
                         </td>
                         <td class="customer-info-cell">
-                            <strong><i class="fa-solid fa-user" style="font-size: 11px; margin-right: 4px; color: var(--admin-muted);"></i><?php echo htmlspecialchars($o['first_name'] . ' ' . $o['last_name']); ?></strong>
-                            <small><i class="fa-solid fa-phone" style="font-size: 9px; margin-right: 3px;"></i><?php echo htmlspecialchars($o['phone']); ?></small>
-                            <?php if (($o['fulfillment_type'] ?? 'delivery') === 'pickup'): ?>
-                                <span style="display: inline-block; background: #e8f7ef; color: #1a6645; border: 1px solid #a3d9bc; padding: 2px 6px; border-radius: 6px; font-size: 10px; font-weight: 700; margin-top: 3px;">
-                                    <i class="fa-solid fa-store"></i> Store Pickup
+                            <strong><?php echo htmlspecialchars(trim($o['first_name'] . ' ' . $o['last_name'])); ?></strong>
+                            <small><?php echo htmlspecialchars($o['phone']); ?></small>
+                        </td>
+                        <td>
+                            <div class="order-price-val">₱<?php echo number_format((float) $o['total_amount'], 2); ?></div>
+                            <?php if ($itemCount): ?>
+                                <span class="order-contents-line" title="<?php echo htmlspecialchars(implode(', ', array_map(
+                                    fn ($i) => $i['product_name'] . ' (' . $i['service_size'] . ' ×' . (int) $i['quantity'] . ')', $items
+                                ))); ?>">
+                                    <?php echo $itemCount; ?> <?php echo $itemCount === 1 ? 'item' : 'items'; ?> · <?php echo $unitCount; ?> <?php echo $unitCount === 1 ? 'pc' : 'pcs'; ?>
                                 </span>
-                            <?php elseif (!empty($o['delivery_address'])): ?>
-                                <small style="color: #7b523b; display: block; margin-top: 3px; max-width: 180px; line-height: 1.3;" title="<?php echo htmlspecialchars($o['delivery_address']); ?>">
-                                    <i class="fa-solid fa-truck" style="font-size: 9px; margin-right: 2px; color: var(--admin-brown);"></i><?php echo htmlspecialchars(mb_strimwidth($o['delivery_address'], 0, 45, '...')); ?>
-                                </small>
+                            <?php else: ?>
+                                <span class="order-contents-line is-muted">No items</span>
                             <?php endif; ?>
-                        </td>
-                        <td>
-                            <div class="order-items-list">
-                                <?php foreach ($items as $it): ?>
-                                    <div class="order-item-pill">
-                                        <strong><?php echo htmlspecialchars($it['product_name']); ?></strong>
-                                        <span class="item-size"><?php echo htmlspecialchars($it['service_size']); ?></span>
-                                        <span class="item-qty">× <?php echo (int) $it['quantity']; ?></span>
-                                    </div>
-                                <?php endforeach; ?>
-                            </div>
-                        </td>
-                        <td>
-                            <div class="order-price-val">
-                                ₱<?php echo number_format((float) ($o['amount'] ?? 0), 2); ?>
-                            </div>
-                            <?php if ((float)($o['delivery_fee'] ?? 0) > 0): ?>
-                                <small style="display: block; font-size: 10px; color: var(--admin-muted);">+ ₱<?php echo number_format((float) $o['delivery_fee'], 2); ?> Del.</small>
+                            <?php if ((float) ($o['delivery_fee'] ?? 0) > 0): ?>
+                                <span class="order-contents-line is-muted">+ ₱<?php echo number_format((float) $o['delivery_fee'], 2); ?> delivery</span>
                             <?php endif; ?>
-                            <span class="order-pay-channel">
-                                <i class="fa-solid fa-mobile-screen"></i> GCash
-                            </span>
                         </td>
                         <td>
                             <?php if ($payStatus === 'paid'): ?>
                                 <span class="status-chip is-paid"><i class="fa-solid fa-circle-check"></i> Paid</span>
-                            <?php elseif ($payStatus === 'failed'): ?>
-                                <span class="status-chip is-failed"><i class="fa-solid fa-circle-xmark"></i> Failed</span>
+                            <?php elseif (in_array($payStatus, ['failed', 'expired', 'voided'], true)): ?>
+                                <span class="status-chip is-failed"><i class="fa-solid fa-circle-xmark"></i> <?php echo ucfirst($payStatus); ?></span>
                             <?php else: ?>
                                 <span class="status-chip is-pending"><i class="fa-solid fa-clock"></i> Pending</span>
                             <?php endif; ?>
+                            <span class="order-pay-channel <?php echo $isCash ? 'is-cash' : 'is-online'; ?>">
+                                <i class="fa-solid <?php echo $isCash ? 'fa-money-bill-wave' : ($channel !== '' ? strtolower('fa-' . $channel) : 'fa-mobile-screen'); ?>"></i>
+                                <?php echo htmlspecialchars($payShort); ?>
+                            </span>
                         </td>
                         <td>
-                            <?php
-                            $statusChip = match ($ordStatus) {
-                                'processing' => ['is-processing', 'bread-slice', 'Baking'],
-                                'out_for_delivery' => ['is-processing', 'motorcycle', 'On the Way'],
-                                'ready_for_pickup' => ['is-processing', 'store', 'Ready for Pickup'],
-                                'completed' => ['is-completed', 'check', 'Completed'],
-                                'cancelled' => ['is-cancelled', 'ban', 'Cancelled'],
-                                default => ['is-pending', 'clipboard-list', 'Received'],
-                            };
-                            ?>
-                            <span class="status-chip <?php echo $statusChip[0]; ?>"><i class="fa-solid fa-<?php echo $statusChip[1]; ?>"></i> <?php echo $statusChip[2]; ?></span>
-                        </td>
-                        <td>
-                            <?php if (($o['fulfillment_type'] ?? 'delivery') === 'pickup'): ?>
-                                <span style="color: var(--admin-muted); font-size: 12px;">Pickup — no rider</span>
-                            <?php else: ?>
-                                <form method="POST" style="margin: 0;">
-                                    <input type="hidden" name="action" value="assign_rider" />
-                                    <input type="hidden" name="order_id" value="<?php echo $oid; ?>" />
-                                    <input type="hidden" name="status" value="<?php echo htmlspecialchars($ordStatus); ?>" />
-                                    <div class="status-select-wrap">
-                                        <select name="rider_id" onchange="this.form.submit()">
-                                            <option value="0">Assign rider</option>
-                                            <?php foreach ($riders as $rider): ?>
-                                                <option value="<?php echo (int) $rider['id']; ?>" <?php echo (int) $o['rider_id'] === (int) $rider['id'] ? 'selected' : ''; ?>>
-                                                    <?php echo htmlspecialchars(riderDisplayName($rider)); ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-                                </form>
-                                <?php if (!$riders): ?>
-                                    <small style="display:block;margin-top:4px;color:#a34f43;font-size:10px;">Create a rider account in Admin → Users.</small>
-                                <?php endif; ?>
+                            <span class="status-chip <?php echo $chip[0]; ?>"><i class="fa-solid fa-<?php echo $chip[1]; ?>"></i> <?php echo $chip[2]; ?></span>
+                            <?php if ($lastEntry): ?>
+                                <span class="order-trail-line" title="<?php echo htmlspecialchars(
+                                    orderHistoryLabel((string) $lastEntry['to_status'], $lastEntry['from_status'], $fulfillment)
+                                    . ($lastEntry['note'] ? ' — ' . $lastEntry['note'] : '')
+                                    . ' · ' . ($lastEntry['actor_name'] ?: 'System')
+                                    . ' · ' . date('M d, Y g:i A', strtotime($lastEntry['created_at']))
+                                ); ?>">
+                                    <?php echo htmlspecialchars(orderHistoryLabelShort((string) $lastEntry['to_status'], $lastEntry['from_status'], $fulfillment)); ?>
+                                    <em><?php echo htmlspecialchars($lastEntry['actor_name'] ?: 'System'); ?></em>
+                                    <em><?php echo htmlspecialchars(orderHistoryRelativeTime($lastEntry['created_at'])); ?></em>
+                                </span>
                             <?php endif; ?>
                         </td>
-                        <td style="text-align: right;">
-                            <form method="POST" style="margin: 0;">
-                                <input type="hidden" name="action" value="update_status" />
-                                <input type="hidden" name="order_id" value="<?php echo $oid; ?>" />
-                                <input type="hidden" name="rider_id" value="<?php echo (int) ($o['rider_id'] ?? 0); ?>" />
-                                <input type="hidden" name="ref" value="<?php echo htmlspecialchars($o['reference_id']); ?>" />
-                                <div class="status-select-wrap">
-                                    <select name="status" onchange="this.form.submit()">
-                                        <?php foreach (staffOrderStatusOptions($o['fulfillment_type'] ?? 'delivery') as $value => $label): ?>
-                                            <option value="<?php echo htmlspecialchars($value); ?>" <?php echo $ordStatus === $value ? 'selected' : ''; ?>><?php echo htmlspecialchars($label); ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-                            </form>
+                        <td class="is-action">
+                            <div class="order-next-cell">
+                                <?php if ($action['kind'] === 'accept'): ?>
+                                    <form method="POST">
+                                        <input type="hidden" name="action" value="accept_order" />
+                                        <input type="hidden" name="order_id" value="<?php echo $oid; ?>" />
+                                        <button class="order-action-btn is-primary" type="submit">
+                                            <i class="fa-solid fa-<?php echo $action['icon']; ?>"></i> <?php echo $action['label']; ?>
+                                        </button>
+                                    </form>
+                                <?php elseif ($action['kind'] === 'rider' && $fulfillment === 'delivery'): ?>
+                                    <form method="POST" class="order-rider-form">
+                                        <input type="hidden" name="action" value="assign_rider" />
+                                        <input type="hidden" name="order_id" value="<?php echo $oid; ?>" />
+                                        <div class="status-select-wrap">
+                                            <select name="rider_id" onchange="if (this.value) this.form.submit();">
+                                                <option value="0">Assign rider…</option>
+                                                <?php foreach ($riders as $rider): ?>
+                                                    <option value="<?php echo (int) $rider['id']; ?>"><?php echo htmlspecialchars(riderDisplayName($rider)); ?></option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </div>
+                                    </form>
+                                <?php elseif ($action['kind'] === 'rider'): ?>
+                                    <form method="POST">
+                                        <input type="hidden" name="action" value="send_on_the_way" />
+                                        <input type="hidden" name="order_id" value="<?php echo $oid; ?>" />
+                                        <button class="order-action-btn is-primary" type="submit">
+                                            <i class="fa-solid fa-store"></i> Mark ready
+                                        </button>
+                                    </form>
+                                <?php elseif ($action['kind'] === 'ontheway'): ?>
+                                    <form method="POST">
+                                        <input type="hidden" name="action" value="send_on_the_way" />
+                                        <input type="hidden" name="order_id" value="<?php echo $oid; ?>" />
+                                        <button class="order-action-btn is-primary" type="submit">
+                                            <i class="fa-solid fa-motorcycle"></i> Send on the way
+                                        </button>
+                                    </form>
+                                <?php else: ?>
+                                    <span class="order-action-idle" title="<?php echo htmlspecialchars($action['hint']); ?>">
+                                        <i class="fa-solid fa-<?php echo $action['icon']; ?>"></i> <?php echo $action['label']; ?>
+                                    </span>
+                                <?php endif; ?>
+
+                                <button class="order-view-btn" type="button" data-order-drawer="order-drawer-<?php echo $oid; ?>"
+                                        aria-controls="order-drawer-<?php echo $oid; ?>" title="View full order details">
+                                    <i class="fa-solid fa-chevron-right"></i>
+                                </button>
+                            </div>
                         </td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
             </table>
         </div>
+        <p class="orders-result-count">
+            Showing <?php echo count($orders); ?> open <?php echo count($orders) === 1 ? 'order' : 'orders'; ?>
+            <?php echo $hasFilters ? '(filtered)' : ''; ?> · <?php echo $inProcessTotal; ?> open in total
+            · <?php echo $closedTotal; ?> in Order History
+        </p>
     <?php endif; ?>
 </section>
 
+<?php require __DIR__ . '/../includes/staff_order_drawer.php'; ?>
+<?php require __DIR__ . '/../includes/staff_order_drawer_script.php'; ?>
 <?php require __DIR__ . '/../includes/staff_footer.php'; ?>

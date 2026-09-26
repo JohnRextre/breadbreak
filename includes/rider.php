@@ -44,6 +44,179 @@ function ensureRiderSupport(PDO $pdo): void
     }
 
     ensureDeliveryMessages($pdo);
+    ensureDeliveryCompletionSupport($pdo);
+}
+
+// Columns the rider needs to close out a delivery: proof photo, cash collected, chat lock.
+function ensureDeliveryCompletionSupport(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $done = true;
+
+    $columns = [
+        'proof_photo_data' => 'MEDIUMBLOB NULL',
+        'proof_photo_mime' => 'VARCHAR(50) NULL',
+        'proof_note' => 'VARCHAR(255) NULL',
+        'proof_captured_at' => 'DATETIME NULL',
+        'collected_amount' => 'DECIMAL(10,2) NULL',
+        'collected_at' => 'DATETIME NULL',
+        'chat_closed_at' => 'DATETIME NULL',
+        'chat_closed_by' => 'VARCHAR(20) NULL',
+    ];
+
+    foreach ($columns as $name => $definition) {
+        $exists = (int) $pdo->query(
+            'SELECT COUNT(*) FROM information_schema.columns
+             WHERE table_schema = DATABASE()
+               AND table_name = ' . $pdo->quote('orders') . '
+               AND column_name = ' . $pdo->quote($name)
+        )->fetchColumn();
+
+        if ($exists) {
+            continue;
+        }
+
+        try {
+            $pdo->exec("ALTER TABLE orders ADD COLUMN {$name} {$definition}");
+        } catch (Throwable) {
+            // Column already exists, or the account cannot ALTER.
+        }
+    }
+}
+
+function deliveryProofLimits(): array
+{
+    return [
+        'max_bytes' => 5 * 1024 * 1024,
+        'mimes' => [
+            'image/jpeg' => 'jpg',
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+        ],
+    ];
+}
+
+// Returns ['data' => binary, 'mime' => 'image/jpeg'] or null when no file was attached.
+// Throws RuntimeException with a rider-friendly message on anything invalid.
+function readDeliveryProofUpload(string $field = 'proof_photo'): ?array
+{
+    if (empty($_FILES[$field]) || !is_array($_FILES[$field])) {
+        return null;
+    }
+
+    $file = $_FILES[$field];
+    $error = (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE);
+    if ($error === UPLOAD_ERR_NO_FILE) {
+        return null;
+    }
+
+    $limits = deliveryProofLimits();
+
+    if ($error === UPLOAD_ERR_INI_SIZE || $error === UPLOAD_ERR_FORM_SIZE) {
+        throw new RuntimeException('That photo is too large. Please upload one under 5 MB.');
+    }
+    if ($error !== UPLOAD_ERR_OK || !is_uploaded_file((string) ($file['tmp_name'] ?? ''))) {
+        throw new RuntimeException('The delivery photo failed to upload. Please try again.');
+    }
+    if ((int) ($file['size'] ?? 0) > $limits['max_bytes']) {
+        throw new RuntimeException('That photo is too large. Please upload one under 5 MB.');
+    }
+
+    $mime = (new finfo(FILEINFO_MIME_TYPE))->file((string) $file['tmp_name']);
+    if (!isset($limits['mimes'][$mime])) {
+        throw new RuntimeException('The delivery photo must be a JPG, PNG, or WEBP image.');
+    }
+
+    $data = file_get_contents((string) $file['tmp_name']);
+    if ($data === false || $data === '') {
+        throw new RuntimeException('Unable to read the uploaded delivery photo.');
+    }
+
+    return ['data' => $data, 'mime' => $mime];
+}
+
+// Locks the rider/customer thread. Called the moment an order leaves the rider's hands.
+function endDeliveryConversation(PDO $pdo, int $orderId, string $closedBy = 'rider'): void
+{
+    $pdo->prepare(
+        "UPDATE orders
+         SET chat_closed_at = IFNULL(chat_closed_at, NOW()),
+             chat_closed_by = IFNULL(chat_closed_by, :by)
+         WHERE id = :id"
+    )->execute(['id' => $orderId, 'by' => $closedBy]);
+}
+
+function reopenDeliveryConversation(PDO $pdo, int $orderId): void
+{
+    $pdo->prepare('UPDATE orders SET chat_closed_at = NULL, chat_closed_by = NULL WHERE id = :id')
+        ->execute(['id' => $orderId]);
+}
+
+function deliveryChatClosed(array $order): bool
+{
+    if (trim((string) ($order['chat_closed_at'] ?? '')) !== '') {
+        return true;
+    }
+    return in_array((string) ($order['status'] ?? ''), ['cancelled', 'completed'], true);
+}
+
+function deliveryChatClosedReason(array $order): string
+{
+    $status = (string) ($order['status'] ?? '');
+    if ($status === 'cancelled') {
+        return 'This order was cancelled, so the chat is closed.';
+    }
+    if ($status === 'completed' || trim((string) ($order['chat_closed_at'] ?? '')) !== '') {
+        return 'Delivered. This conversation has ended — please contact the bakery if you need help.';
+    }
+    return 'This conversation has ended.';
+}
+
+// Logs an automated note in the thread (e.g. the closing message after a delivery).
+function logDeliverySystemMessage(PDO $pdo, int $orderId, int $senderId, string $body): void
+{
+    $text = trim($body);
+    if ($text === '') {
+        return;
+    }
+    try {
+        $pdo->prepare(
+            "INSERT INTO delivery_messages (order_id, sender_id, sender_role, body)
+             VALUES (:oid, :sid, 'rider', :body)"
+        )->execute([
+            'oid' => $orderId,
+            'sid' => $senderId,
+            'body' => mb_substr($text, 0, 500),
+        ]);
+    } catch (Throwable) {
+        // Never block a delivery just because the audit note could not be written.
+    }
+}
+
+// Normalised cash picture for an order row, so the card and the handlers agree.
+function orderCashSummary(array $row): array
+{
+    $isCash = strtoupper((string) ($row['payment_method'] ?? '')) === 'CASH';
+    $total = (float) ($row['total_amount'] ?? 0);
+    $declared = (float) ($row['cash_amount'] ?? 0);
+    $collected = array_key_exists('collected_amount', $row) && $row['collected_amount'] !== null
+        ? (float) $row['collected_amount']
+        : null;
+    $received = $collected ?? $declared;
+
+    return [
+        'is_cash' => $isCash,
+        'total' => $total,
+        'declared' => $declared,
+        'collected' => $collected,
+        'received' => $received,
+        'change' => $received > 0 ? max(0, $received - $total) : 0.0,
+        'paid' => strtolower((string) ($row['payment_status'] ?? 'pending')) === 'paid',
+        'collected_at' => $row['collected_at'] ?? null,
+    ];
 }
 
 function activeRiders(PDO $pdo): array
@@ -92,7 +265,8 @@ function deliveryChatOrder(PDO $pdo, int $orderId): ?array
 {
     $stmt = $pdo->prepare(
         "SELECT o.id, o.reference_id, o.status, o.fulfillment_type, o.delivery_address,
-                o.customer_id, o.rider_id,
+                o.customer_id, o.rider_id, o.chat_closed_at, o.chat_closed_by,
+                o.proof_captured_at, (o.proof_photo_data IS NOT NULL) AS has_proof,
                 c.first_name AS customer_first, c.last_name AS customer_last, c.phone AS customer_phone,
                 c.profile_data AS customer_photo, c.profile_mime AS customer_mime,
                 r.first_name AS rider_first, r.last_name AS rider_last, r.phone AS rider_phone,

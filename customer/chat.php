@@ -24,7 +24,10 @@ if (!$order || (int) $order['customer_id'] !== $customerId || empty($order['ride
 
 $messages = deliveryMessages($pdo, $orderId);
 $riderStarted = deliveryRiderHasMessaged($messages);
-$chatLocked = in_array($order['status'], ['cancelled'], true);
+$chatLocked = deliveryChatClosed($order);
+$chatClosedReason = deliveryChatClosedReason($order);
+$hasProof = !empty($order['has_proof']);
+$proofUrl = BASE_URL . '/api/delivery-proof.php?order=' . $orderId;
 $canReply = $riderStarted && !$chatLocked;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'send_message') {
@@ -71,7 +74,9 @@ require __DIR__ . '/../includes/header.php';
 
     <div class="chat-thread" id="chat-thread">
         <div class="chat-system">
-            <?php if ($riderStarted): ?>
+            <?php if ($chatLocked): ?>
+                This conversation has ended.
+            <?php elseif ($riderStarted): ?>
                 You can reply to your rider about this delivery.
             <?php else: ?>
                 Your rider will start this chat. You’ll be able to reply after their first message.
@@ -94,12 +99,22 @@ require __DIR__ . '/../includes/header.php';
                 </div>
             </div>
         <?php endforeach; ?>
+        <?php if ($chatLocked && $hasProof): ?>
+            <div class="chat-row is-theirs">
+                <div class="chat-proof">
+                    <a href="<?php echo htmlspecialchars($proofUrl); ?>" target="_blank" rel="noopener">
+                        <img src="<?php echo htmlspecialchars($proofUrl); ?>" alt="Delivery proof photo" loading="lazy" />
+                    </a>
+                    <span><i class="fa-solid fa-camera"></i> Proof of delivery<?php echo $order['proof_captured_at'] ? ' · ' . date('M j, g:i A', strtotime($order['proof_captured_at'])) : ''; ?></span>
+                </div>
+            </div>
+        <?php endif; ?>
     </div>
 
     <?php if ($chatError): ?><p class="chat-error"><?php echo htmlspecialchars($chatError); ?></p><?php endif; ?>
 
     <?php if ($chatLocked): ?>
-        <p class="chat-locked">This order was cancelled. Chat is closed.</p>
+        <p class="chat-locked"><i class="fa-solid fa-lock"></i> <?php echo htmlspecialchars($chatClosedReason); ?></p>
     <?php elseif (!$canReply): ?>
         <p class="chat-locked">Waiting for your rider to send the first message.</p>
     <?php else: ?>

@@ -810,62 +810,8 @@
     margin: 0 auto;
 }
 
-.order-status-card {
-    background: #fff;
-    border: 1px solid var(--border);
-    border-radius: 18px;
-    box-shadow: var(--shadow-soft);
-    padding: 1.15rem 1.25rem 1.2rem;
-}
-
-.order-status-card.is-featured {
-    border-color: rgba(201, 121, 64, .45);
-}
-
-.order-status-card-top {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    align-items: flex-start;
-    margin-bottom: .9rem;
-}
-
-.order-status-card-top h2 {
-    margin: 0;
-    font-size: 1rem;
-    color: var(--brown-900);
-}
-
-.order-status-card-top p {
-    margin: .2rem 0 0;
-    color: var(--muted);
-    font-size: .82rem;
-}
-
-.order-status-track {
-    padding: .35rem 0 .2rem;
-}
-
-.order-status-label {
-    margin: .85rem 0 0;
-    text-align: center;
-    font-size: .95rem;
-    color: var(--brown-900);
-    font-weight: 800;
-}
-
-.order-status-message {
-    margin: .25rem 0 0;
-    text-align: center;
-    color: var(--muted);
-    font-size: .84rem;
-}
-
-.order-status-address {
-    margin: .7rem 0 0;
-    font-size: .82rem;
-    color: var(--muted);
-}
+/* Customer My Orders now owns its own stylesheet (assets/css/order-status.css).
+   The old .order-status-card rules were removed with the redesign. */
 
 .order-status-address i {
     color: var(--accent);

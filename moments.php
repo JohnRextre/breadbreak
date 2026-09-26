@@ -1,75 +1,10 @@
 <?php
 $pageTitle = 'BreadMoments | BreadBreak';
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+require_once __DIR__ . '/includes/moments.php';
 
-require_once __DIR__ . '/config/database.php';
-
-/* ── Limits ───────────────────────────────────────────────────────────── */
-$MOMENT_MAX_PHOTOS  = 4;
-$MOMENT_MAX_BYTES   = 8 * 1024 * 1024; // 8MB per photo
-$MOMENT_MAX_TOPICS  = 5;
-
-/* ── Tables (created on first visit, idempotent) ──────────────────────── */
-$momentPdo = null;
-$momentDbError = '';
-try {
-    $momentPdo = getDatabaseConnection();
-    $momentPdo->exec("CREATE TABLE IF NOT EXISTS bread_moments (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        category_id INT DEFAULT NULL,
-        title VARCHAR(140) NOT NULL,
-        body TEXT NOT NULL,
-        topics VARCHAR(255) NOT NULL DEFAULT '',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        KEY idx_bread_moments_created (created_at),
-        KEY idx_bread_moments_user (user_id),
-        CONSTRAINT fk_bread_moments_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    $momentPdo->exec("CREATE TABLE IF NOT EXISTS bread_moment_photos (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        moment_id INT NOT NULL,
-        photo_data MEDIUMBLOB NOT NULL,
-        photo_mime VARCHAR(64) NOT NULL,
-        position TINYINT UNSIGNED NOT NULL DEFAULT 0,
-        KEY idx_bread_moment_photos_moment (moment_id),
-        CONSTRAINT fk_bread_moment_photos_moment FOREIGN KEY (moment_id) REFERENCES bread_moments(id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-} catch (Throwable $momentDbException) {
-    $momentPdo = null;
-    $momentDbError = 'We could not reach the database just yet — please refresh in a moment.';
-}
-
-/* ── Helpers ──────────────────────────────────────────────────────────── */
-function momentEscape($value): string
-{
-    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
-}
-
-function momentTimeAgo(?string $datetime): string
-{
-    if (!$datetime) return '';
-    $then = strtotime($datetime);
-    if (!$then) return '';
-    $diff = time() - $then;
-    if ($diff < 60) return 'just now';
-    if ($diff < 3600) {
-        $mins = (int) floor($diff / 60);
-        return $mins . ' min ago';
-    }
-    if ($diff < 86400) {
-        $hours = (int) floor($diff / 3600);
-        return $hours . ' hr' . ($hours === 1 ? '' : 's') . ' ago';
-    }
-    if ($diff < 604800) {
-        $days = (int) floor($diff / 86400);
-        return $days . ' day' . ($days === 1 ? '' : 's') . ' ago';
-    }
-    return date('M j, Y', $then);
-}
+$momentPdo = momentDb();
+$momentDbError = momentDbError();
 
 /* ── Hardcoded quick starters (tap to insert into the text field) ─────── */
 $momentStarters = [
@@ -100,16 +35,73 @@ $momentTips = [
 $momentNotes = [
     'Your profile name (first name only) is shown with your post.',
     'Your photos are displayed inside the post.',
-    'You can delete your post anytime.',
+    'You can edit or delete your post anytime.',
 ];
+
+/* ── Photo upload reader (shared by create + edit) ────────────────────── */
+function momentReadUploads($files, int $slots, array &$errors): array
+{
+    $photos = [];
+    if (!is_array($files) || (int) ($files['error'][0] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+        return $photos;
+    }
+    $count = count($files['name']);
+    if ($count > $slots || $slots <= 0) {
+        $errors['photos'] = 'You can attach up to ' . MOMENT_MAX_PHOTOS . ' photos per post.';
+        return $photos;
+    }
+
+    $finfo = new finfo(FILEINFO_MIME_TYPE);
+    $allowedMimes = ['image/jpeg' => 1, 'image/png' => 1, 'image/webp' => 1];
+    for ($index = 0; $index < $count; $index++) {
+        $errorCode = (int) $files['error'][$index];
+        if ($errorCode === UPLOAD_ERR_NO_FILE) continue;
+        if ($errorCode === UPLOAD_ERR_INI_SIZE || $errorCode === UPLOAD_ERR_FORM_SIZE) {
+            $errors['photos'] = 'One of your photos is too large — the limit is 8MB per photo.';
+            return $photos;
+        }
+        $tmp = (string) $files['tmp_name'][$index];
+        if ($errorCode !== UPLOAD_ERR_OK || !is_uploaded_file($tmp)) {
+            $errors['photos'] = 'That photo could not be read. Please try another one.';
+            return $photos;
+        }
+        if ((int) $files['size'][$index] > MOMENT_MAX_BYTES) {
+            $errors['photos'] = $files['name'][$index] . ' is larger than 8MB — please pick a smaller photo.';
+            return $photos;
+        }
+        $mime = $finfo->file($tmp);
+        if (!isset($allowedMimes[$mime])) {
+            $errors['photos'] = 'Only JPG, PNG, and WEBP photos are allowed.';
+            return $photos;
+        }
+        $contents = file_get_contents($tmp);
+        if ($contents === false) {
+            $errors['photos'] = 'That photo could not be read. Please try another one.';
+            return $photos;
+        }
+        $photos[] = ['data' => $contents, 'mime' => $mime];
+    }
+    return $photos;
+}
+
+function momentNormalizeTopics(string $raw): array
+{
+    return array_values(array_filter(array_map(static function (string $topic): string {
+        $topic = strtolower(trim($topic));
+        $topic = (string) preg_replace('/[^a-z0-9\- ]/', '', $topic);
+        $topic = (string) preg_replace('/\s+/', '-', $topic);
+        $topic = (string) preg_replace('/-+/', '-', $topic);
+        return trim($topic, '-');
+    }, explode(',', $raw))));
+}
 
 /* ── Who is posting ───────────────────────────────────────────────────── */
 $momentUserId = (int) ($_SESSION['user_id'] ?? 0);
 $momentIsSignedIn = $momentUserId > 0;
 $momentFirstName = trim((string) ($_SESSION['first_name'] ?? ''));
 
-// A guest who asked to create a post signs in first.
-if (!$momentIsSignedIn && isset($_GET['create'])) {
+// Guests who asked to create or edit a post sign in first.
+if (!$momentIsSignedIn && (isset($_GET['create']) || isset($_GET['edit']))) {
     header('Location: /BreadBreak/login.php?redirect=moments');
     exit;
 }
@@ -118,13 +110,34 @@ if (!$momentIsSignedIn && isset($_GET['create'])) {
 $momentFilterCat = (int) ($_GET['cat'] ?? 0);
 $momentFilterTopic = strtolower(trim((string) ($_GET['topic'] ?? '')));
 $momentFilterTopic = (string) preg_replace('/[^a-z0-9\-]/', '', $momentFilterTopic);
+$momentSearch = trim((string) ($_GET['q'] ?? ''));
+$momentSearch = (string) preg_replace('/[<>]/', '', mb_substr($momentSearch, 0, 60));
+$momentTab = (string) ($_GET['tab'] ?? 'foryou');
+if (!in_array($momentTab, ['foryou', 'top'], true)) $momentTab = 'foryou';
 
 $momentFilterQuery = [];
 if ($momentFilterCat) $momentFilterQuery['cat'] = $momentFilterCat;
 if ($momentFilterTopic) $momentFilterQuery['topic'] = $momentFilterTopic;
+if ($momentSearch !== '') $momentFilterQuery['q'] = $momentSearch;
+if ($momentTab !== 'foryou') $momentFilterQuery['tab'] = $momentTab;
 $momentFilterUrl = '/BreadBreak/moments.php' . ($momentFilterQuery ? '?' . http_build_query($momentFilterQuery) : '');
 
-/* ── Form state ───────────────────────────────────────────────────────── */
+// Feed link builder that keeps the active filters unless overridden (null clears).
+$momentHref = function (array $overrides = []) use ($momentFilterCat, $momentFilterTopic, $momentSearch, $momentTab) {
+    $params = [
+        'cat'   => $momentFilterCat ?: null,
+        'topic' => $momentFilterTopic ?: null,
+        'q'     => $momentSearch !== '' ? $momentSearch : null,
+        'tab'   => $momentTab !== 'foryou' ? $momentTab : null,
+    ];
+    foreach ($overrides as $momentParamKey => $momentParamValue) {
+        $params[$momentParamKey] = $momentParamValue;
+    }
+    $params = array_filter($params, static fn ($momentParamValue) => $momentParamValue !== null && $momentParamValue !== '');
+    return '/BreadBreak/moments.php' . ($params ? '?' . http_build_query($params) : '');
+};
+
+/* ── Form state (create + edit) ───────────────────────────────────────── */
 $momentErrors = [];
 $momentOld = [
     'title'       => '',
@@ -133,8 +146,11 @@ $momentOld = [
     'topics'      => '',
 ];
 $momentPhotosNote = '';
+$momentEditId = 0;
+$momentEditKeep = '';
+$momentNext = 'feed';
 
-/* ── POST: create / delete ────────────────────────────────────────────── */
+/* ── POST: create / edit ──────────────────────────────────────────────── */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$momentIsSignedIn) {
         header('Location: /BreadBreak/login.php?redirect=moments');
@@ -143,19 +159,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $momentAction = (string) ($_POST['action'] ?? '');
 
-    if ($momentAction === 'delete') {
-        if ($momentPdo) {
-            $momentDelete = $momentPdo->prepare('DELETE FROM bread_moments WHERE id = :id AND user_id = :user_id');
-            $momentDelete->execute(['id' => (int) ($_POST['moment_id'] ?? 0), 'user_id' => $momentUserId]);
-            if ($momentDelete->rowCount()) {
-                $_SESSION['moments_notice'] = 'Your BreadMoment was deleted.';
-            }
-        }
-        header('Location: ' . $momentFilterUrl);
-        exit;
-    }
+    if ($momentAction === 'create' || $momentAction === 'edit') {
+        $isEdit = $momentAction === 'edit';
+        $momentEditId = $isEdit ? (int) ($_POST['moment_id'] ?? 0) : 0;
+        $momentEditKeep = $isEdit ? (string) ($_POST['keep_photos'] ?? '') : '';
+        $momentNext = ($_POST['next'] ?? '') === 'moment' ? 'moment' : 'feed';
 
-    if ($momentAction === 'create') {
         $momentOld['title']       = trim((string) ($_POST['title'] ?? ''));
         $momentOld['body']        = trim((string) ($_POST['body'] ?? ''));
         $momentOld['category_id'] = (string) (int) ($_POST['category_id'] ?? 0);
@@ -183,20 +192,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $momentErrors['body'] = 'Please keep it under 2,000 characters.';
         }
 
-        $momentTopicList = array_values(array_filter(array_map(static function (string $topic): string {
-            $topic = strtolower(trim($topic));
-            $topic = (string) preg_replace('/[^a-z0-9\- ]/', '', $topic);
-            $topic = (string) preg_replace('/\s+/', '-', $topic);
-            $topic = (string) preg_replace('/-+/', '-', $topic);
-            return trim($topic, '-');
-        }, explode(',', $momentOld['topics']))));
-
-        if (count($momentTopicList) > $MOMENT_MAX_TOPICS) {
-            $momentErrors['topics'] = 'You can add up to ' . $MOMENT_MAX_TOPICS . ' topics.';
+        $momentTopicList = momentNormalizeTopics($momentOld['topics']);
+        if (count($momentTopicList) > MOMENT_MAX_TOPICS) {
+            $momentErrors['topics'] = 'You can add up to ' . MOMENT_MAX_TOPICS . ' topics.';
         }
 
-        $momentPhotos = [];
-        if ($momentPdo) {
+        $momentOwnedPost = null;
+        $momentKeptIds = array_values(array_unique(array_filter(array_map('intval', explode(',', $momentEditKeep)))));
+
+        if (!$momentPdo) {
+            $momentErrors['form'] = $momentDbError ?: 'We could not save your post just yet. Please try again.';
+        } else {
             $momentCategoryOk = false;
             if ($momentOld['category_id'] !== '') {
                 $momentCategoryCheck = $momentPdo->prepare('SELECT id FROM menu_categories WHERE id = :id LIMIT 1');
@@ -206,89 +212,108 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$momentCategoryOk) {
                 $momentErrors['category_id'] = 'Select the menu category where this was baked.';
             }
-        }
 
-        // Photos — up to 4, finfo-validated JPG / PNG / WEBP.
-        $momentFiles = $_FILES['photos'] ?? null;
-        if (is_array($momentFiles) && (int) ($momentFiles['error'][0] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
-            $momentFileCount = count($momentFiles['name']);
-            if ($momentFileCount > $MOMENT_MAX_PHOTOS) {
-                $momentErrors['photos'] = 'You can attach up to ' . $MOMENT_MAX_PHOTOS . ' photos.';
-            } else {
-                $momentFinfo = new finfo(FILEINFO_MIME_TYPE);
-                $momentAllowedMimes = ['image/jpeg' => 1, 'image/png' => 1, 'image/webp' => 1];
-                for ($momentIndex = 0; $momentIndex < $momentFileCount; $momentIndex++) {
-                    $momentErrorCode = (int) $momentFiles['error'][$momentIndex];
-                    if ($momentErrorCode === UPLOAD_ERR_NO_FILE) continue;
-                    if ($momentErrorCode === UPLOAD_ERR_INI_SIZE || $momentErrorCode === UPLOAD_ERR_FORM_SIZE) {
-                        $momentErrors['photos'] = 'One of your photos is too large — the limit is 8MB per photo.';
-                        break;
-                    }
-                    $momentTmp = (string) $momentFiles['tmp_name'][$momentIndex];
-                    if ($momentErrorCode !== UPLOAD_ERR_OK || !is_uploaded_file($momentTmp)) {
-                        $momentErrors['photos'] = 'That photo could not be read. Please try another one.';
-                        break;
-                    }
-                    $momentSize = (int) $momentFiles['size'][$momentIndex];
-                    if ($momentSize > $MOMENT_MAX_BYTES) {
-                        $momentErrors['photos'] = $momentFiles['name'][$momentIndex] . ' is larger than 8MB — please pick a smaller photo.';
-                        break;
-                    }
-                    $momentMime = $momentFinfo->file($momentTmp);
-                    if (!isset($momentAllowedMimes[$momentMime])) {
-                        $momentErrors['photos'] = 'Only JPG, PNG, and WEBP photos are allowed.';
-                        break;
-                    }
-                    $momentContents = file_get_contents($momentTmp);
-                    if ($momentContents === false) {
-                        $momentErrors['photos'] = 'That photo could not be read. Please try another one.';
-                        break;
-                    }
-                    $momentPhotos[] = ['data' => $momentContents, 'mime' => $momentMime];
+            if ($isEdit) {
+                $momentOwnStatement = $momentPdo->prepare('SELECT id, post_type FROM bread_moments WHERE id = :id AND user_id = :user_id LIMIT 1');
+                $momentOwnStatement->execute(['id' => $momentEditId, 'user_id' => $momentUserId]);
+                $momentOwnedPost = $momentOwnStatement->fetch() ?: null;
+                if (!$momentOwnedPost) {
+                    $momentErrors['form'] = 'You can only edit your own posts.';
+                } elseif (($momentOwnedPost['post_type'] ?? 'moment') === 'promotion') {
+                    // Store promotions live in the staff portal — resend them there.
+                    header('Location: /BreadBreak/staff/moments.php?edit=' . $momentEditId);
+                    exit;
+                } elseif ($momentKeptIds) {
+                    $momentKeepStatement = $momentPdo->prepare(
+                        'SELECT id FROM bread_moment_photos WHERE moment_id = :moment_id AND id IN (' . implode(',', $momentKeptIds) . ')'
+                    );
+                    $momentKeepStatement->execute(['moment_id' => $momentEditId]);
+                    $momentKeptIds = array_map('intval', array_column($momentKeepStatement->fetchAll(), 'id'));
                 }
             }
         }
 
+        // Photos — up to 4 total (kept + new), finfo-validated JPG / PNG / WEBP.
+        $momentSlots = MOMENT_MAX_PHOTOS - ($isEdit ? count($momentKeptIds) : 0);
+        $momentPhotos = momentReadUploads($_FILES['photos'] ?? null, $momentSlots, $momentErrors);
+
         if (!$momentErrors) {
-            if (!$momentPdo) {
-                $momentErrors['form'] = $momentDbError ?: 'We could not save your post just yet. Please try again.';
-            } else {
-                try {
-                    $momentPdo->beginTransaction();
+            try {
+                $momentPdo->beginTransaction();
+
+                if ($isEdit) {
+                    $momentUpdate = $momentPdo->prepare(
+                        'UPDATE bread_moments SET category_id = :category_id, title = :title, body = :body, topics = :topics WHERE id = :id AND user_id = :user_id AND post_type = \'moment\''
+                    );
+                    $momentUpdate->execute([
+                        'category_id' => $momentOld['category_id'] === '' ? null : (int) $momentOld['category_id'],
+                        'title'       => $momentOld['title'],
+                        'body'        => $momentOld['body'],
+                        'topics'      => implode(',', $momentTopicList),
+                        'id'          => $momentEditId,
+                        'user_id'     => $momentUserId,
+                    ]);
+
+                    $momentDeleteSql = $momentKeptIds
+                        ? 'DELETE FROM bread_moment_photos WHERE moment_id = :moment_id AND id NOT IN (' . implode(',', $momentKeptIds) . ')'
+                        : 'DELETE FROM bread_moment_photos WHERE moment_id = :moment_id';
+                    $momentPhotoDelete = $momentPdo->prepare($momentDeleteSql);
+                    $momentPhotoDelete->execute(['moment_id' => $momentEditId]);
+
+                    // Re-number the survivors so the first photo stays first.
+                    $momentSurvivorStatement = $momentPdo->prepare('SELECT id FROM bread_moment_photos WHERE moment_id = :moment_id ORDER BY position ASC, id ASC');
+                    $momentSurvivorStatement->execute(['moment_id' => $momentEditId]);
+                    $momentSurvivors = array_column($momentSurvivorStatement->fetchAll(), 'id');
+                    $momentPositionUpdate = $momentPdo->prepare('UPDATE bread_moment_photos SET position = :position WHERE id = :id');
+                    foreach ($momentSurvivors as $momentPosition => $momentSurvivorId) {
+                        $momentPositionUpdate->execute(['position' => $momentPosition, 'id' => (int) $momentSurvivorId]);
+                    }
+
+                    $momentTargetId = $momentEditId;
+                    $momentNewPosition = count($momentSurvivors);
+                    $momentNoticeText = 'Your BreadMoment was updated.';
+                } else {
                     $momentInsert = $momentPdo->prepare(
                         'INSERT INTO bread_moments (user_id, category_id, title, body, topics) VALUES (:user_id, :category_id, :title, :body, :topics)'
                     );
                     $momentInsert->execute([
-                        'user_id'    => $momentUserId,
+                        'user_id'     => $momentUserId,
                         'category_id' => $momentOld['category_id'] === '' ? null : (int) $momentOld['category_id'],
-                        'title'      => $momentOld['title'],
-                        'body'       => $momentOld['body'],
-                        'topics'     => implode(',', $momentTopicList),
+                        'title'       => $momentOld['title'],
+                        'body'        => $momentOld['body'],
+                        'topics'      => implode(',', $momentTopicList),
                     ]);
-                    $momentNewId = (int) $momentPdo->lastInsertId();
-
-                    if ($momentPhotos) {
-                        $momentPhotoInsert = $momentPdo->prepare(
-                            'INSERT INTO bread_moment_photos (moment_id, photo_data, photo_mime, position) VALUES (:moment_id, :photo_data, :photo_mime, :position)'
-                        );
-                        foreach ($momentPhotos as $momentPosition => $momentPhoto) {
-                            $momentPhotoInsert->execute([
-                                'moment_id'  => $momentNewId,
-                                'photo_data' => $momentPhoto['data'],
-                                'photo_mime' => $momentPhoto['mime'],
-                                'position'   => $momentPosition,
-                            ]);
-                        }
-                    }
-
-                    $momentPdo->commit();
-                    $_SESSION['moments_notice'] = 'Your BreadMoment is live — thanks for sharing, ' . $momentFirstName . '!';
-                    header('Location: ' . $momentFilterUrl);
-                    exit;
-                } catch (Throwable $momentInsertException) {
-                    if ($momentPdo->inTransaction()) $momentPdo->rollBack();
-                    $momentErrors['form'] = 'We could not save your post just yet. Please try again.';
+                    $momentTargetId = (int) $momentPdo->lastInsertId();
+                    $momentNewPosition = 0;
+                    $momentNoticeText = 'Your BreadMoment is live — thanks for sharing, ' . $momentFirstName . '!';
                 }
+
+                if ($momentPhotos) {
+                    $momentPhotoInsert = $momentPdo->prepare(
+                        'INSERT INTO bread_moment_photos (moment_id, photo_data, photo_mime, position) VALUES (:moment_id, :photo_data, :photo_mime, :position)'
+                    );
+                    foreach ($momentPhotos as $momentOffset => $momentPhoto) {
+                        $momentPhotoInsert->execute([
+                            'moment_id'  => $momentTargetId,
+                            'photo_data' => $momentPhoto['data'],
+                            'photo_mime' => $momentPhoto['mime'],
+                            'position'   => $momentNewPosition + $momentOffset,
+                        ]);
+                    }
+                }
+
+                $momentPdo->commit();
+
+                $_SESSION['moments_notice'] = $momentNoticeText;
+                if ($isEdit && $momentNext === 'moment') {
+                    header('Location: /BreadBreak/moment.php?id=' . $momentTargetId);
+                } else {
+                    header('Location: ' . $momentFilterUrl);
+                }
+                exit;
+            } catch (Throwable $momentSaveException) {
+                if ($momentPdo->inTransaction()) $momentPdo->rollBack();
+                $momentErrors['form'] = 'We could not save your post just yet. Please try again.';
             }
         }
 
@@ -299,6 +324,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'errors'      => $momentErrors,
                 'old'         => $momentOld,
                 'photos_note' => $momentPhotosNote,
+                'edit_id'     => $isEdit ? $momentEditId : 0,
+                'keep'        => $isEdit ? $momentEditKeep : '',
+                'next'        => $momentNext,
             ];
             header('Location: ' . $momentFilterUrl);
             exit;
@@ -310,18 +338,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $momentNotice = (string) ($_SESSION['moments_notice'] ?? '');
 unset($_SESSION['moments_notice']);
 
+$momentRestoredEdit = false;
 if (!empty($_SESSION['moments_form']) && is_array($_SESSION['moments_form'])) {
     $momentSavedForm = $_SESSION['moments_form'];
     $momentErrors = is_array($momentSavedForm['errors'] ?? null) ? $momentSavedForm['errors'] : [];
     $momentOld = array_merge($momentOld, is_array($momentSavedForm['old'] ?? null) ? $momentSavedForm['old'] : []);
     $momentPhotosNote = (string) ($momentSavedForm['photos_note'] ?? '');
+    $momentEditId = (int) ($momentSavedForm['edit_id'] ?? 0);
+    $momentEditKeep = (string) ($momentSavedForm['keep'] ?? '');
+    $momentNext = ($momentSavedForm['next'] ?? '') === 'moment' ? 'moment' : 'feed';
+    $momentRestoredEdit = $momentEditId > 0;
 }
 unset($_SESSION['moments_form']);
+
+/* ── Fresh ?edit=ID — pre-fill the composer from the owner's post ─────── */
+$momentEditPhotos = [];
+if (!$momentRestoredEdit && $momentIsSignedIn && isset($_GET['edit'])) {
+    $momentEditStatement = $momentPdo
+        ? $momentPdo->prepare('SELECT id, title, body, topics, category_id, post_type FROM bread_moments WHERE id = :id AND user_id = :user_id LIMIT 1')
+        : null;
+    if ($momentEditStatement) {
+        $momentEditStatement->execute(['id' => (int) $_GET['edit'], 'user_id' => $momentUserId]);
+        $momentEditRow = $momentEditStatement->fetch() ?: null;
+    } else {
+        $momentEditRow = null;
+    }
+
+    if (!$momentEditRow) {
+        $_SESSION['moments_notice'] = 'You can only edit your own posts.';
+        header('Location: /BreadBreak/moments.php');
+        exit;
+    }
+
+    if (($momentEditRow['post_type'] ?? 'moment') === 'promotion') {
+        // Store promotions are revised from the staff portal, not this composer.
+        header('Location: /BreadBreak/staff/moments.php?edit=' . (int) $momentEditRow['id']);
+        exit;
+    }
+
+    $momentEditId = (int) $momentEditRow['id'];
+    $momentOld['title'] = (string) $momentEditRow['title'];
+    $momentOld['body'] = (string) $momentEditRow['body'];
+    $momentOld['category_id'] = (string) (int) $momentEditRow['category_id'];
+    $momentOld['topics'] = (string) $momentEditRow['topics'];
+    $momentNext = ($_GET['next'] ?? '') === 'moment' ? 'moment' : 'feed';
+
+    if ($momentPdo) {
+        $momentEditPhotoStatement = $momentPdo->prepare('SELECT id FROM bread_moment_photos WHERE moment_id = :moment_id ORDER BY position ASC, id ASC');
+        $momentEditPhotoStatement->execute(['moment_id' => $momentEditId]);
+        foreach ($momentEditPhotoStatement->fetchAll() as $momentEditPhotoRow) {
+            $momentEditPhotos[] = (int) $momentEditPhotoRow['id'];
+        }
+    }
+    $momentEditKeep = $momentEditId ? implode(',', $momentEditPhotos) : '';
+}
+
+if ($momentRestoredEdit && $momentPdo && $momentEditId) {
+    $momentEditPhotoStatement = $momentPdo->prepare('SELECT id FROM bread_moment_photos WHERE moment_id = :moment_id ORDER BY position ASC, id ASC');
+    $momentEditPhotoStatement->execute(['moment_id' => $momentEditId]);
+    foreach ($momentEditPhotoStatement->fetchAll() as $momentEditPhotoRow) {
+        $momentEditPhotos[] = (int) $momentEditPhotoRow['id'];
+    }
+}
+$momentKeepIdList = array_filter(array_map('intval', explode(',', $momentEditKeep)));
 
 /* ── Feed data ────────────────────────────────────────────────────────── */
 $momentCategories = [];
 $momentPosts = [];
-$momentPhotosByPost = [];
+$momentFirstPhotos = [];
 $momentTopicCloud = [];
 $momentTotalPosts = 0;
 
@@ -348,6 +432,8 @@ if ($momentPdo) {
 
     $momentWhere = [];
     $momentParams = [];
+    // Only approved posts ever appear in the public feed.
+    $momentWhere[] = "m.moderation_status = 'visible'";
     if ($momentFilterCat) {
         $momentWhere[] = 'm.category_id = :cat';
         $momentParams['cat'] = $momentFilterCat;
@@ -356,20 +442,36 @@ if ($momentPdo) {
         $momentWhere[] = 'FIND_IN_SET(:topic, m.topics)';
         $momentParams['topic'] = $momentFilterTopic;
     }
-    $momentWhereSql = $momentWhere ? ' WHERE ' . implode(' AND ', $momentWhere) : '';
+    if ($momentSearch !== '') {
+        $momentWhere[] = '(m.title LIKE :q1 OR m.body LIKE :q2 OR m.topics LIKE :q3 OR u.first_name LIKE :q4 OR pi.name LIKE :q5)';
+        $momentParams['q1'] = '%' . $momentSearch . '%';
+        $momentParams['q2'] = $momentParams['q1'];
+        $momentParams['q3'] = $momentParams['q1'];
+        $momentParams['q4'] = $momentParams['q1'];
+        $momentParams['q5'] = $momentParams['q1'];
+    }
+    $momentWhereSql = ' WHERE ' . implode(' AND ', $momentWhere);
 
-    $momentCountStatement = $momentPdo->prepare('SELECT COUNT(*) FROM bread_moments m' . $momentWhereSql);
+    // The count needs the joins too because search matches author and product names.
+    $momentCountStatement = $momentPdo->prepare('SELECT COUNT(*) FROM bread_moments m JOIN users u ON u.id = m.user_id LEFT JOIN inventory_items pi ON pi.id = m.product_id' . $momentWhereSql);
     $momentCountStatement->execute($momentParams);
     $momentTotalPosts = (int) $momentCountStatement->fetchColumn();
 
+    // "For you" stays chronological; "Top posts" ranks by likes + comments + views.
+    $momentOrderSql = $momentTab === 'top'
+        ? 'ORDER BY ((SELECT COUNT(*) FROM bread_moment_comments cc WHERE cc.moment_id = m.id)
+                 + (SELECT COUNT(*) FROM bread_moment_likes l WHERE l.moment_id = m.id)
+                 + m.views_count) DESC, m.created_at DESC, m.id DESC'
+        : 'ORDER BY m.created_at DESC, m.id DESC';
+
     $momentPostStatement = $momentPdo->prepare("
-        SELECT m.id, m.user_id, m.category_id, m.title, m.body, m.topics, m.created_at,
-               u.first_name, c.name AS category_name
+        SELECT m.id, m.title, m.views_count, m.created_at, m.post_type, m.product_id,
+               u.first_name, u.profile_data, u.profile_mime, pi.name AS product_name
         FROM bread_moments m
         JOIN users u ON u.id = m.user_id
-        LEFT JOIN menu_categories c ON c.id = m.category_id
+        LEFT JOIN inventory_items pi ON pi.id = m.product_id
         $momentWhereSql
-        ORDER BY m.created_at DESC, m.id DESC
+        $momentOrderSql
         LIMIT 30
     ");
     $momentPostStatement->execute($momentParams);
@@ -377,13 +479,13 @@ if ($momentPdo) {
 
     if ($momentPosts) {
         $momentPostIds = implode(',', array_map('intval', array_column($momentPosts, 'id')));
-        foreach ($momentPdo->query("SELECT id, moment_id FROM bread_moment_photos WHERE moment_id IN ($momentPostIds) ORDER BY position ASC, id ASC") as $momentPhotoRow) {
-            $momentPhotosByPost[(int) $momentPhotoRow['moment_id']][] = (int) $momentPhotoRow['id'];
+        foreach ($momentPdo->query("SELECT moment_id, MIN(id) AS photo_id FROM bread_moment_photos WHERE moment_id IN ($momentPostIds) GROUP BY moment_id") as $momentPhotoRow) {
+            $momentFirstPhotos[(int) $momentPhotoRow['moment_id']] = (int) $momentPhotoRow['photo_id'];
         }
     }
 
     $momentTopicCounts = [];
-    foreach ($momentPdo->query("SELECT topics FROM bread_moments WHERE topics <> '' ORDER BY created_at DESC LIMIT 60") as $momentTopicRow) {
+    foreach ($momentPdo->query("SELECT topics FROM bread_moments WHERE topics <> '' AND moderation_status = 'visible' ORDER BY created_at DESC LIMIT 60") as $momentTopicRow) {
         foreach (explode(',', (string) $momentTopicRow['topics']) as $momentTopicName) {
             $momentTopicName = trim($momentTopicName);
             if ($momentTopicName === '') continue;
@@ -394,8 +496,9 @@ if ($momentPdo) {
     $momentTopicCloud = array_slice(array_keys($momentTopicCounts), 0, 10);
 }
 
-$momentAutoOpen = isset($_GET['create']) || $momentErrors || !empty($_GET['tips']);
+$momentAutoOpen = isset($_GET['create']) || $momentErrors || !empty($_GET['tips']) || $momentEditId > 0;
 $momentAutoTips = $momentErrors || !empty($_GET['tips']);
+$momentIsEdit = $momentEditId > 0;
 ?>
 
 <?php include __DIR__ . '/includes/header.php'; ?>
@@ -415,9 +518,15 @@ $momentAutoTips = $momentErrors || !empty($_GET['tips']);
                     <i class="fa-solid fa-circle-info"></i> Posting Tips
                 </button>
                 <?php if ($momentIsSignedIn): ?>
+                <?php if ($momentIsEdit): ?>
+                <a href="/BreadBreak/moments.php?create=1" class="btn btn-primary">
+                    <i class="fa-solid fa-plus"></i> Create Post
+                </a>
+                <?php else: ?>
                 <button type="button" class="btn btn-primary" data-open-moment>
                     <i class="fa-solid fa-plus"></i> Create Post
                 </button>
+                <?php endif; ?>
                 <?php else: ?>
                 <a href="/BreadBreak/login.php?redirect=moments" class="btn btn-primary">
                     <i class="fa-solid fa-plus"></i> Create Post
@@ -438,21 +547,49 @@ $momentAutoTips = $momentErrors || !empty($_GET['tips']);
                 <p class="form-notice is-error" role="alert"><i class="fa-solid fa-circle-exclamation"></i> <?php echo momentEscape($momentDbError); ?></p>
             <?php endif; ?>
 
+            <!-- ── Tabs: For you / Top posts + search ── -->
+            <div class="moments-bar">
+                <div class="moments-tabs" role="tablist" aria-label="Feed type">
+                    <a role="tab" aria-selected="<?php echo $momentTab === 'foryou' ? 'true' : 'false'; ?>"
+                       class="moments-tab<?php echo $momentTab === 'foryou' ? ' is-active' : ''; ?>"
+                       href="<?php echo momentEscape($momentHref(['tab' => 'foryou'])); ?>">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> For you
+                    </a>
+                    <a role="tab" aria-selected="<?php echo $momentTab === 'top' ? 'true' : 'false'; ?>"
+                       class="moments-tab<?php echo $momentTab === 'top' ? ' is-active' : ''; ?>"
+                       href="<?php echo momentEscape($momentHref(['tab' => 'top'])); ?>">
+                        <i class="fa-solid fa-fire-flame-curved"></i> Top posts
+                    </a>
+                </div>
+                <form class="moments-search" method="get" action="/BreadBreak/moments.php" role="search">
+                    <?php if ($momentFilterCat): ?><input type="hidden" name="cat" value="<?php echo (int) $momentFilterCat; ?>" /><?php endif; ?>
+                    <?php if ($momentFilterTopic): ?><input type="hidden" name="topic" value="<?php echo momentEscape($momentFilterTopic); ?>" /><?php endif; ?>
+                    <?php if ($momentTab !== 'foryou'): ?><input type="hidden" name="tab" value="<?php echo momentEscape($momentTab); ?>" /><?php endif; ?>
+                    <input type="search" name="q" maxlength="60" value="<?php echo momentEscape($momentSearch); ?>"
+                           placeholder="Search posts, people, topics…" aria-label="Search BreadMoments" />
+                    <button type="submit" aria-label="Search"><i class="fa-solid fa-magnifying-glass"></i></button>
+                </form>
+            </div>
+
             <div class="moments-toolbar">
                 <div class="moments-chips">
-                    <a href="/BreadBreak/moments.php" class="shop-filter-chip<?php echo !$momentFilterCat ? ' is-active' : ''; ?>">All Moments</a>
+                    <a href="<?php echo momentEscape($momentHref(['cat' => null])); ?>" class="shop-filter-chip<?php echo !$momentFilterCat ? ' is-active' : ''; ?>">All Moments</a>
                     <?php foreach ($momentCategories as $momentCategory): ?>
-                    <a href="/BreadBreak/moments.php?cat=<?php echo (int) $momentCategory['id']; ?><?php echo $momentFilterTopic ? '&topic=' . urlencode($momentFilterTopic) : ''; ?>"
+                    <a href="<?php echo momentEscape($momentHref(['cat' => $momentCategory['id']])); ?>"
                        class="shop-filter-chip<?php echo $momentFilterCat === $momentCategory['id'] ? ' is-active' : ''; ?>"><?php echo momentEscape($momentCategory['name']); ?></a>
                     <?php endforeach; ?>
                 </div>
-                <span class="moments-total"><?php echo (int) $momentTotalPosts; ?> post<?php echo $momentTotalPosts === 1 ? '' : 's'; ?></span>
+                <span class="moments-total"><?php echo (int) $momentTotalPosts; ?> post<?php echo $momentTotalPosts === 1 ? '' : 's'; ?><?php echo $momentTab === 'top' ? ' · ranked' : ''; ?></span>
             </div>
 
-            <?php if ($momentFilterTopic): ?>
+            <?php if ($momentFilterTopic || $momentSearch !== ''): ?>
             <p class="moment-filter-note">
-                <span><i class="fa-solid fa-hashtag"></i> Showing posts tagged <strong>#<?php echo momentEscape($momentFilterTopic); ?></strong></span>
-                <a href="/BreadBreak/moments.php<?php echo $momentFilterCat ? '?cat=' . (int) $momentFilterCat : ''; ?>" title="Clear topic filter"><i class="fa-solid fa-xmark"></i> Clear</a>
+                <span>
+                    <?php if ($momentFilterTopic): ?><i class="fa-solid fa-hashtag"></i> Showing posts tagged <strong>#<?php echo momentEscape($momentFilterTopic); ?></strong><?php endif; ?>
+                    <?php if ($momentFilterTopic && $momentSearch !== ''): ?> &nbsp;·&nbsp; <?php endif; ?>
+                    <?php if ($momentSearch !== ''): ?><i class="fa-solid fa-magnifying-glass"></i> Results for <strong>“<?php echo momentEscape($momentSearch); ?>”</strong><?php endif; ?>
+                </span>
+                <a href="<?php echo momentEscape($momentHref(['topic' => null, 'q' => null])); ?>" title="Clear filters"><i class="fa-solid fa-xmark"></i> Clear</a>
             </p>
             <?php endif; ?>
 
@@ -460,7 +597,7 @@ $momentAutoTips = $momentErrors || !empty($_GET['tips']);
             <div class="moments-topics-bar">
                 <span class="moments-topics-label"><i class="fa-solid fa-hashtag"></i> Popular topics</span>
                 <?php foreach ($momentTopicCloud as $momentCloudTopic): ?>
-                <a href="/BreadBreak/moments.php?topic=<?php echo urlencode($momentCloudTopic); ?>"
+                <a href="<?php echo momentEscape($momentHref(['topic' => $momentCloudTopic])); ?>"
                    class="<?php echo $momentFilterTopic === $momentCloudTopic ? 'is-active' : ''; ?>">#<?php echo momentEscape($momentCloudTopic); ?></a>
                 <?php endforeach; ?>
             </div>
@@ -469,7 +606,7 @@ $momentAutoTips = $momentErrors || !empty($_GET['tips']);
             <?php if (!$momentPosts): ?>
                 <div class="shop-empty">
                     <i class="fa-solid fa-camera-retro"></i>
-                    <p><?php echo ($momentFilterCat || $momentFilterTopic) ? 'No posts match this filter yet.' : 'No BreadMoments yet — be the first to share what you ordered.'; ?></p>
+                    <p><?php echo ($momentFilterCat || $momentFilterTopic || $momentSearch !== '') ? 'No posts match this filter yet.' : 'No BreadMoments yet — be the first to share what you ordered.'; ?></p>
                     <?php if ($momentIsSignedIn): ?>
                     <button type="button" class="btn btn-primary" data-open-moment><i class="fa-solid fa-plus"></i> Create the first post</button>
                     <?php else: ?>
@@ -479,58 +616,42 @@ $momentAutoTips = $momentErrors || !empty($_GET['tips']);
             <?php else: ?>
                 <div class="moments-grid">
                     <?php foreach ($momentPosts as $momentPost):
-                        $momentPostPhotos = $momentPhotosByPost[$momentPost['id']] ?? [];
-                        $momentIsOwn = $momentIsSignedIn && (int) $momentPost['user_id'] === $momentUserId;
-                        $momentPostTopics = array_values(array_filter(array_map('trim', explode(',', (string) $momentPost['topics']))));
+                        $momentCardPhoto = $momentFirstPhotos[$momentPost['id']] ?? 0;
                         $momentPostInitial = strtoupper(substr(trim((string) $momentPost['first_name']), 0, 1)) ?: '?';
+                        $momentCardPromo = ($momentPost['post_type'] ?? 'moment') === 'promotion';
                     ?>
-                    <article class="moment-card">
-                        <?php if ($momentPostPhotos): ?>
-                        <div class="moment-photos<?php echo count($momentPostPhotos) > 1 ? ' is-strip' : ''; ?>">
-                            <?php foreach ($momentPostPhotos as $momentPhotoIndex => $momentPhotoId): ?>
-                            <img src="/BreadBreak/api/moment-image.php?id=<?php echo (int) $momentPhotoId; ?>"
-                                 alt="<?php echo momentEscape($momentPost['title']); ?> — photo <?php echo $momentPhotoIndex + 1; ?>"
+                    <a class="moment-card<?php echo $momentCardPromo ? ' is-promotion' : ''; ?>" href="/BreadBreak/moment.php?id=<?php echo (int) $momentPost['id']; ?>">
+                        <span class="moment-card-media">
+                            <?php if ($momentCardPromo): ?>
+                            <span class="moment-promo-badge"><i class="fa-solid fa-bullhorn"></i> Promotion</span>
+                            <?php endif; ?>
+                            <?php if ($momentCardPhoto): ?>
+                            <img src="/BreadBreak/api/moment-image.php?id=<?php echo (int) $momentCardPhoto; ?>"
+                                 alt="<?php echo momentEscape($momentPost['title']); ?>"
                                  loading="lazy" />
-                            <?php endforeach; ?>
-                            <?php if (count($momentPostPhotos) > 1): ?>
-                            <span class="moment-photo-count"><i class="fa-solid fa-images"></i> <?php echo count($momentPostPhotos); ?></span>
+                            <?php else: ?>
+                            <i class="fa-solid fa-bread-slice" aria-hidden="true"></i>
                             <?php endif; ?>
-                        </div>
+                        </span>
+                        <span class="moment-card-title"><?php echo momentEscape($momentPost['title']); ?></span>
+                        <?php if ($momentCardPromo && !empty($momentPost['product_name'])): ?>
+                        <span class="moment-promo-product"><i class="fa-solid fa-star"></i> <?php echo momentEscape($momentPost['product_name']); ?></span>
                         <?php endif; ?>
-
-                        <div class="moment-card-body">
-                            <div class="moment-meta">
-                                <?php if ($momentPost['category_name']): ?>
-                                <span class="moment-category"><i class="fa-solid fa-bread-slice"></i> <?php echo momentEscape($momentPost['category_name']); ?></span>
-                                <?php endif; ?>
-                                <time datetime="<?php echo momentEscape($momentPost['created_at']); ?>"><?php echo momentEscape(momentTimeAgo($momentPost['created_at'])); ?></time>
-                            </div>
-                            <h3><?php echo momentEscape($momentPost['title']); ?></h3>
-                            <p class="moment-text"><?php echo nl2br(momentEscape($momentPost['body'])); ?></p>
-                            <?php if ($momentPostTopics): ?>
-                            <div class="moment-topics">
-                                <?php foreach ($momentPostTopics as $momentPostTopic): ?>
-                                <a href="/BreadBreak/moments.php?topic=<?php echo urlencode($momentPostTopic); ?>">#<?php echo momentEscape($momentPostTopic); ?></a>
-                                <?php endforeach; ?>
-                            </div>
-                            <?php endif; ?>
-                        </div>
-
-                        <footer class="moment-card-foot">
+                        <span class="moment-card-foot">
+                            <?php if ($momentCardPromo): ?>
+                            <span class="moment-avatar moment-avatar-store" aria-hidden="true"><i class="fa-solid fa-store"></i></span>
+                            <span class="moment-author"><?php echo momentEscape(MOMENT_STORE_NAME); ?></span>
+                            <span class="moment-posted-by">Posted by store</span>
+                            <?php elseif (!empty($momentPost['profile_data']) && !empty($momentPost['profile_mime'])): ?>
+                            <span class="moment-avatar"><img src="data:<?php echo momentEscape($momentPost['profile_mime']); ?>;base64,<?php echo base64_encode($momentPost['profile_data']); ?>" alt="<?php echo momentEscape($momentPost['first_name']); ?>" /></span>
+                            <span class="moment-author"><?php echo momentEscape($momentPost['first_name']); ?></span>
+                            <?php else: ?>
                             <span class="moment-avatar" aria-hidden="true"><?php echo momentEscape($momentPostInitial); ?></span>
                             <span class="moment-author"><?php echo momentEscape($momentPost['first_name']); ?></span>
-                            <?php if ($momentIsOwn): ?>
-                            <form method="POST" class="moment-delete-form"
-                                  onsubmit="return confirm('Delete this BreadMoment? This cannot be undone.');">
-                                <input type="hidden" name="action" value="delete" />
-                                <input type="hidden" name="moment_id" value="<?php echo (int) $momentPost['id']; ?>" />
-                                <button type="submit" class="moment-delete" aria-label="Delete my post" title="Delete my post">
-                                    <i class="fa-solid fa-trash"></i>
-                                </button>
-                            </form>
                             <?php endif; ?>
-                        </footer>
-                    </article>
+                            <span class="moment-views" title="Views"><i class="fa-solid fa-eye"></i> <?php echo (int) $momentPost['views_count']; ?></span>
+                        </span>
+                    </a>
                     <?php endforeach; ?>
                 </div>
             <?php endif; ?>
@@ -538,13 +659,13 @@ $momentAutoTips = $momentErrors || !empty($_GET['tips']);
     </section>
 </main>
 
-<!-- ── Create post modal ──────────────────────────────────────────────── -->
+<!-- ── Create / edit post modal ───────────────────────────────────────── -->
 <div class="moment-modal-backdrop" id="momentBackdrop" hidden></div>
 <div class="moment-modal" id="momentModal" role="dialog" aria-modal="true" aria-labelledby="momentModalTitle" hidden>
     <div class="moment-modal-head">
         <div>
             <span class="eyebrow">BreadMoments</span>
-            <h2 id="momentModalTitle">Create post</h2>
+            <h2 id="momentModalTitle"><?php echo $momentIsEdit ? 'Edit post' : 'Create post'; ?></h2>
         </div>
         <div class="moment-modal-tools">
             <button type="button" class="moment-tips-toggle" id="momentTipsToggle" aria-expanded="false" aria-controls="momentTips">
@@ -577,7 +698,12 @@ $momentAutoTips = $momentErrors || !empty($_GET['tips']);
 
     <?php if ($momentIsSignedIn): ?>
     <form class="moment-form" method="POST" enctype="multipart/form-data" id="momentForm">
-        <input type="hidden" name="action" value="create" />
+        <input type="hidden" name="action" value="<?php echo $momentIsEdit ? 'edit' : 'create'; ?>" />
+        <?php if ($momentIsEdit): ?>
+        <input type="hidden" name="moment_id" value="<?php echo (int) $momentEditId; ?>" />
+        <input type="hidden" name="next" value="<?php echo $momentNext === 'moment' ? 'moment' : 'feed'; ?>" />
+        <input type="hidden" id="momentKeepPhotos" name="keep_photos" value="<?php echo momentEscape($momentEditKeep); ?>" />
+        <?php endif; ?>
         <div class="moment-trap" aria-hidden="true">
             <label for="moment-website">Leave this field empty</label>
             <input type="text" id="moment-website" name="website" tabindex="-1" autocomplete="off" />
@@ -585,7 +711,7 @@ $momentAutoTips = $momentErrors || !empty($_GET['tips']);
 
         <!-- Photos -->
         <div class="moment-field">
-            <span class="moment-label">Upload photos</span>
+            <span class="moment-label"><?php echo $momentIsEdit ? 'Photos' : 'Upload photos'; ?></span>
             <div class="moment-photo-actions">
                 <button type="button" class="moment-photo-btn" id="momentCameraBtn">
                     <i class="fa-solid fa-camera"></i> Camera
@@ -593,10 +719,21 @@ $momentAutoTips = $momentErrors || !empty($_GET['tips']);
                 <button type="button" class="moment-photo-btn" id="momentGalleryBtn">
                     <i class="fa-solid fa-images"></i> Photo gallery
                 </button>
-                <span class="moment-photo-hint">JPG, PNG or WEBP · up to <?php echo $MOMENT_MAX_PHOTOS; ?> photos · 8MB each</span>
+                <span class="moment-photo-hint">JPG, PNG or WEBP · up to <?php echo MOMENT_MAX_PHOTOS; ?> photos · 8MB each</span>
             </div>
             <input type="file" id="momentPhotos" name="photos[]"
                    accept="image/jpeg,image/png,image/webp" multiple hidden />
+            <div class="moment-previews" id="momentExisting">
+                <?php foreach ($momentEditPhotos as $momentEditPhotoId): ?>
+                    <?php if ($momentKeepIdList && !in_array($momentEditPhotoId, $momentKeepIdList, true)) continue; ?>
+                    <div class="moment-preview" data-photo-id="<?php echo (int) $momentEditPhotoId; ?>">
+                        <img src="/BreadBreak/api/moment-image.php?id=<?php echo (int) $momentEditPhotoId; ?>" alt="Current photo" />
+                        <button type="button" class="moment-preview-remove" data-remove-existing aria-label="Remove this photo">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                <?php endforeach; ?>
+            </div>
             <div class="moment-previews" id="momentPreviews"></div>
             <span class="moment-photo-count" id="momentPhotoCount"></span>
             <?php if ($momentPhotosNote !== ''): ?>
@@ -668,7 +805,9 @@ $momentAutoTips = $momentErrors || !empty($_GET['tips']);
 
         <div class="moment-form-foot">
             <p class="moment-public-note"><i class="fa-solid fa-globe"></i> Your post will be shared publicly.</p>
-            <button class="btn btn-primary" type="submit"><i class="fa-solid fa-paper-plane"></i> Share my post</button>
+            <button class="btn btn-primary" type="submit">
+                <i class="fa-solid fa-paper-plane"></i> <?php echo $momentIsEdit ? 'Save changes' : 'Share my post'; ?>
+            </button>
         </div>
     </form>
     <?php else: ?>
@@ -722,15 +861,29 @@ $momentAutoTips = $momentErrors || !empty($_GET['tips']);
         if (event.key === 'Escape' && !modal.hidden) closeModal();
     });
 
-    /* ── Photos: Camera / gallery picker + previews ── */
+    /* ── Photos: Camera / gallery picker + previews (edit aware) ── */
     var photoInput = document.getElementById('momentPhotos');
+    var existingWrap = document.getElementById('momentExisting');
     var previewWrap = document.getElementById('momentPreviews');
     var photoError = document.getElementById('momentPhotoError');
     var photoCount = document.getElementById('momentPhotoCount');
+    var keepField = document.getElementById('momentKeepPhotos');
     var chosenPhotos = [];
-    var MAX_PHOTOS = <?php echo $MOMENT_MAX_PHOTOS; ?>;
-    var MAX_BYTES = <?php echo $MOMENT_MAX_BYTES; ?>;
+    var MAX_PHOTOS = <?php echo MOMENT_MAX_PHOTOS; ?>;
+    var MAX_BYTES = <?php echo MOMENT_MAX_BYTES; ?>;
+    var MAX_TOPICS = <?php echo MOMENT_MAX_TOPICS; ?>;
     var ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+    function keptCount() {
+        return existingWrap ? existingWrap.querySelectorAll('[data-photo-id]').length : 0;
+    }
+
+    function syncKeep() {
+        if (!keepField) return;
+        keepField.value = Array.prototype.map.call(existingWrap.querySelectorAll('[data-photo-id]'), function (node) {
+            return node.getAttribute('data-photo-id');
+        }).join(',');
+    }
 
     function syncPhotoInput() {
         if (typeof DataTransfer === 'undefined') return;
@@ -765,9 +918,23 @@ $momentAutoTips = $momentErrors || !empty($_GET['tips']);
             holder.appendChild(remove);
             previewWrap.appendChild(holder);
         });
-        photoCount.textContent = chosenPhotos.length
-            ? chosenPhotos.length + '/' + MAX_PHOTOS + ' photo' + (chosenPhotos.length === 1 ? '' : 's') + ' attached'
+        var total = chosenPhotos.length + keptCount();
+        photoCount.textContent = total
+            ? total + '/' + MAX_PHOTOS + ' photo' + (total === 1 ? '' : 's') + ' attached'
             : '';
+    }
+
+    // ✕ on a photo that already lives in the database (edit mode).
+    if (existingWrap) {
+    Array.prototype.forEach.call(existingWrap.querySelectorAll('[data-remove-existing]'), function (removeButton) {
+        removeButton.addEventListener('click', function () {
+            var holder = removeButton.closest('.moment-preview');
+            if (holder) holder.remove();
+            syncKeep();
+            photoError.textContent = '';
+            renderPhotoPreviews();
+        });
+    });
     }
 
     if (photoInput) {
@@ -782,9 +949,10 @@ $momentAutoTips = $momentErrors || !empty($_GET['tips']);
 
     photoInput.addEventListener('change', function () {
         photoError.textContent = '';
+        var slots = MAX_PHOTOS - keptCount();
         Array.prototype.forEach.call(photoInput.files, function (file) {
-            if (chosenPhotos.length >= MAX_PHOTOS) {
-                photoError.textContent = 'You can attach up to ' + MAX_PHOTOS + ' photos.';
+            if (slots <= 0 || chosenPhotos.length >= slots) {
+                photoError.textContent = 'You can attach up to ' + MAX_PHOTOS + ' photos per post.';
                 return;
             }
             if (file.size > MAX_BYTES) {
@@ -829,7 +997,6 @@ $momentAutoTips = $momentErrors || !empty($_GET['tips']);
     var topicsField = document.getElementById('momentTopics');
     var topicChips = document.getElementById('momentTopicChips');
     var topicError = document.getElementById('momentTopicError');
-    var MAX_TOPICS = <?php echo $MOMENT_MAX_TOPICS; ?>;
 
     function topicList() {
         return topicsField.value ? topicsField.value.split(',').filter(Boolean) : [];
@@ -883,7 +1050,7 @@ $momentAutoTips = $momentErrors || !empty($_GET['tips']);
     renderTopics();
     }
 
-    /* ── Auto-open (after an error, or ?create=1 / ?tips=1) ── */
+    /* ── Auto-open (error, ?create=1, ?tips=1, or while editing) ── */
     <?php if ($momentAutoOpen): ?>
     openModal(<?php echo $momentAutoTips ? 'true' : 'false'; ?>);
     <?php endif; ?>

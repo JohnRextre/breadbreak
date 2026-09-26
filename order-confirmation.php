@@ -40,7 +40,7 @@ if ($ref) {
 
         // Load payment
         $pStmt = $pdo->prepare(
-            "SELECT xendit_payment_request_id, reference_id, amount, payment_method,
+            "SELECT id, xendit_payment_request_id, reference_id, amount, payment_method,
                     payment_channel, status, created_at, updated_at
              FROM payments WHERE order_id = :oid ORDER BY id DESC LIMIT 1"
         );
@@ -84,8 +84,33 @@ function orderStatusBadge(string $status, string $fulfillmentType = 'delivery'):
     return '<span class="badge ' . $cls . '"><i class="fa-solid fa-' . $icon . '"></i> ' . $label . '</span>';
 }
 
-$paymentStatus = $payment['status'] ?? 'pending';
-$orderStatus   = is_array($order) ? ($order['status'] ?? 'pending') : 'pending';
+// Baseline values — always set, whatever happens in the verification below.
+$paymentStatus = (string) ($payment['status'] ?? 'pending');
+$orderStatus   = is_array($order) ? (string) ($order['status'] ?? 'pending') : 'pending';
+
+// Safety net for a dead webhook: ask Xendit directly what happened to this
+// payment. The webhook stays authoritative; this only rescues orders that would
+// otherwise sit at "awaiting payment" forever because the public URL is down.
+$paymentVerification = null;
+if (is_array($order) && !in_array(strtolower($paymentStatus), ['paid', 'failed', 'expired', 'voided'], true)) {
+    try {
+        require_once __DIR__ . '/includes/payments.php';
+        $paymentVerification = verifyOrderPaymentAtXendit($pdo, (int) $order['id']);
+    } catch (Throwable) {
+        $paymentVerification = ['checked' => false, 'status' => null, 'reason' => 'lookup failed'];
+    }
+
+    if (($paymentVerification['status'] ?? null) === 'paid') {
+        $refresh = $pdo->prepare('SELECT status FROM payments WHERE id = :id');
+        $refresh->execute(['id' => (int) $payment['id']]);
+        $paymentStatus = (string) ($refresh->fetchColumn() ?: 'paid');
+
+        $refreshOrder = $pdo->prepare('SELECT status FROM orders WHERE id = :id');
+        $refreshOrder->execute(['id' => (int) $order['id']]);
+        $orderStatus = (string) ($refreshOrder->fetchColumn() ?: 'processing');
+    }
+}
+
 $orderPayMethod = strtoupper(is_array($order) ? ($order['payment_method'] ?? 'GCASH') : 'GCASH');
 $isCashOrder   = ($orderPayMethod === 'CASH');
 $fulfillmentType = is_array($order) ? ($order['fulfillment_type'] ?? 'delivery') : 'delivery';

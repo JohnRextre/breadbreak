@@ -12,6 +12,31 @@ requireRole('customer');
 $status = $_GET['status'] ?? '';  // 'success' or 'cancel'
 $ref    = trim($_GET['ref'] ?? '');
 
+// The customer is back from Xendit, so this is the one moment we know for sure
+// they finished (or abandoned) the payment. If the webhook could not be
+// delivered, confirm straight from Xendit instead of leaving them on
+// "awaiting payment" forever.
+$verification = null;
+$verifiedPaid = false;
+
+if ($ref) {
+    try {
+        $pdo = getDatabaseConnection();
+        require_once __DIR__ . '/includes/payments.php';
+
+        $lookup = $pdo->prepare('SELECT id FROM orders WHERE reference_id = :ref AND customer_id = :cid LIMIT 1');
+        $lookup->execute(['ref' => $ref, 'cid' => (int) $_SESSION['user_id']]);
+        $orderId = (int) ($lookup->fetchColumn() ?: 0);
+
+        if ($orderId > 0) {
+            $verification = verifyOrderPaymentAtXendit($pdo, $orderId, 0);
+            $verifiedPaid = ($verification['status'] ?? null) === 'paid';
+        }
+    } catch (Throwable) {
+        $verification = ['checked' => false, 'status' => null, 'reason' => 'lookup failed'];
+    }
+}
+
 $pageTitle = 'Payment Verification | BreadBreak';
 ?>
 <!DOCTYPE html>
@@ -36,7 +61,11 @@ $pageTitle = 'Payment Verification | BreadBreak';
 <main class="payment-verify-page">
 <div class="container" style="max-width:560px;text-align:center;">
 
-    <?php if ($status === 'success'): ?>
+    <?php if ($verifiedPaid): ?>
+        <div class="payment-verify-icon"><i class="fa-solid fa-circle-check" style="color:#28a067"></i></div>
+        <h2 style="color:var(--brown-900)">Payment Confirmed</h2>
+        <p>Thank you! We received your payment and your order is already being prepared.</p>
+    <?php elseif ($status === 'success'): ?>
         <div class="payment-verify-icon"><i class="fa-solid fa-clock-rotate-left" style="color:var(--accent)"></i></div>
         <h2 style="color:var(--brown-900)">Payment Submitted</h2>
         <p>Thank you! Your GCash payment has been submitted. We are now verifying your payment with Xendit. This usually takes just a few seconds.</p>
@@ -46,8 +75,10 @@ $pageTitle = 'Payment Verification | BreadBreak';
         <p>You cancelled or did not complete the GCash payment. Your order is still saved as <strong>Pending</strong>. You can try again from your order confirmation page.</p>
     <?php endif; ?>
 
-    <div class="payment-verify-spinner"></div>
-    <p style="font-size:.9rem;color:var(--muted);">Redirecting to your order status page&hellip;</p>
+    <?php if (!$verifiedPaid): ?>
+        <div class="payment-verify-spinner"></div>
+        <p style="font-size:.9rem;color:var(--muted);">Redirecting to your order status page&hellip;</p>
+    <?php endif; ?>
 
     <?php if ($ref): ?>
         <a href="/BreadBreak/order-confirmation.php?ref=<?php echo urlencode($ref); ?>"

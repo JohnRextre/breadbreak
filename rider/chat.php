@@ -18,7 +18,10 @@ if (!$order || (int) $order['rider_id'] !== $riderId || ($order['fulfillment_typ
     exit;
 }
 
-$chatLocked = in_array($order['status'], ['cancelled'], true);
+$chatLocked = deliveryChatClosed($order);
+$chatClosedReason = deliveryChatClosedReason($order);
+$hasProof = !empty($order['has_proof']);
+$proofUrl = BASE_URL . '/api/delivery-proof.php?order=' . $orderId;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'send_message' && !$chatLocked) {
     $chatError = sendDeliveryMessage($pdo, $orderId, $riderId, 'rider', (string) ($_POST['body'] ?? ''));
@@ -62,7 +65,11 @@ require __DIR__ . '/../includes/rider_header.php';
 
     <div class="chat-thread" id="chat-thread">
         <div class="chat-system">
-            Chat opened for this delivery. Send the first message — the customer can reply after that.
+            <?php if ($chatLocked): ?>
+                Chat closed — this delivery is <?php echo $order['status'] === 'cancelled' ? 'cancelled' : 'completed'; ?>.
+            <?php else: ?>
+                Chat opened for this delivery. Send the first message — the customer can reply after that.
+            <?php endif; ?>
         </div>
         <?php if (!$messages): ?>
             <div class="chat-empty">
@@ -81,12 +88,22 @@ require __DIR__ . '/../includes/rider_header.php';
                 </div>
             </div>
         <?php endforeach; ?>
+        <?php if ($chatLocked && $hasProof): ?>
+            <div class="chat-row is-theirs">
+                <div class="chat-proof">
+                    <a href="<?php echo htmlspecialchars($proofUrl); ?>" target="_blank" rel="noopener">
+                        <img src="<?php echo htmlspecialchars($proofUrl); ?>" alt="Delivery proof photo" loading="lazy" />
+                    </a>
+                    <span><i class="fa-solid fa-camera"></i> Delivery proof<?php echo $order['proof_captured_at'] ? ' · ' . date('M j, g:i A', strtotime($order['proof_captured_at'])) : ''; ?></span>
+                </div>
+            </div>
+        <?php endif; ?>
     </div>
 
     <?php if ($chatError): ?><p class="chat-error"><?php echo htmlspecialchars($chatError); ?></p><?php endif; ?>
 
     <?php if ($chatLocked): ?>
-        <p class="chat-locked">This order was cancelled. Chat is closed.</p>
+        <p class="chat-locked"><i class="fa-solid fa-lock"></i> <?php echo htmlspecialchars($chatClosedReason); ?></p>
     <?php else: ?>
         <?php if (!$messages): ?>
             <div class="chat-quick">

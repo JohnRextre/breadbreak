@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/auth.php';
 requireRole('customer');
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/moments.php'; // status labels + moderation helpers for My Posts
 
 $pdo = getDatabaseConnection();
 $customerId = (int) ($_SESSION['user_id'] ?? 0);
@@ -312,6 +313,31 @@ $favoritesStmt = $pdo->prepare(
 $favoritesStmt->execute(['cid' => $customerId]);
 $favoriteItems = $favoritesStmt->fetchAll();
 
+// ── My Posts (BreadMoments + insights) ────────────────────────────────────────
+$momentPosts = [];
+$momentTotals = ['posts' => 0, 'views' => 0, 'likes' => 0, 'comments' => 0];
+try {
+    $momentPostsStmt = $pdo->prepare("
+        SELECT m.id, m.title, m.created_at, m.views_count, m.moderation_status, m.moderation_reason,
+               COALESCE((SELECT COUNT(*) FROM bread_moment_likes l WHERE l.moment_id = m.id), 0) AS like_count,
+               COALESCE((SELECT COUNT(*) FROM bread_moment_comments c WHERE c.moment_id = m.id), 0) AS comment_count,
+               (SELECT p.id FROM bread_moment_photos p WHERE p.moment_id = m.id ORDER BY p.position ASC, p.id ASC LIMIT 1) AS photo_id
+        FROM bread_moments m
+        WHERE m.user_id = :uid
+        ORDER BY m.created_at DESC, m.id DESC
+    ");
+    $momentPostsStmt->execute(['uid' => $customerId]);
+    $momentPosts = $momentPostsStmt->fetchAll();
+    $momentTotals['posts'] = count($momentPosts);
+    foreach ($momentPosts as $momentPostRow) {
+        $momentTotals['views'] += (int) $momentPostRow['views_count'];
+        $momentTotals['likes'] += (int) $momentPostRow['like_count'];
+        $momentTotals['comments'] += (int) $momentPostRow['comment_count'];
+    }
+} catch (Throwable $e) {
+    // bread_moments tables may not exist yet — panel shows the empty state.
+}
+
 // ── Page meta ──────────────────────────────────────────────────────────────────
 $pageTitle = 'My Account | BreadBreak';
 $fullName = trim(($account['first_name'] ?? $_SESSION['first_name'] ?? '') . ' ' . ($account['last_name'] ?? $_SESSION['last_name'] ?? ''));
@@ -327,7 +353,7 @@ if ($favoritesPanelActive) $activePanelOnLoad = 'my-favorites';
 // Deep links such as account.php?panel=my-favorites (used after sign-in)
 $requestedPanel = (string) ($_GET['panel'] ?? '');
 if (!$passwordPanelActive && !$addressPanelActive && !$discountPanelActive && !$favoritesPanelActive
-    && in_array($requestedPanel, ['personal-details', 'my-addresses', 'discount-ids', 'my-favorites', 'password-security'], true)) {
+    && in_array($requestedPanel, ['personal-details', 'my-addresses', 'discount-ids', 'my-favorites', 'my-posts', 'password-security'], true)) {
     $activePanelOnLoad = $requestedPanel;
 }
 
@@ -336,6 +362,7 @@ $accountSections = [
     ['id' => 'my-addresses',     'icon' => 'fa-location-dot', 'title' => 'My Addresses', 'description' => 'Save addresses for faster checkout.'],
     ['id' => 'discount-ids',     'icon' => 'fa-id-card', 'title' => 'Senior / PWD ID', 'description' => 'Keep your discount IDs ready for checkout.'],
     ['id' => 'my-favorites',     'icon' => 'fa-heart', 'title' => 'My Favorites', 'description' => 'Everything you tapped the heart on.'],
+    ['id' => 'my-posts',         'icon' => 'fa-camera-retro', 'title' => 'My Posts', 'description' => 'Your BreadMoments and how they perform.'],
     ['id' => 'account-activities', 'icon' => 'fa-clock-rotate-left', 'title' => 'Account Activities', 'description' => 'Review activity from your BreadBreak account.', 'disabled' => true],
     ['id' => 'password-security', 'icon' => 'fa-lock', 'title' => 'Password & Security', 'description' => 'Keep your account password secure.'],
 ];
@@ -637,6 +664,59 @@ require __DIR__ . '/../includes/header.php';
                     <i class="fa-solid fa-heart"></i>
                     <p>No favorites yet. Tap the heart on any product in the Shop to keep it here.</p>
                     <a class="addr-btn addr-btn-default" href="/BreadBreak/menu.php"><i class="fa-solid fa-store"></i> Browse the Shop</a>
+                </div>
+                <?php endif; ?>
+            </section>
+
+            <!-- ── My Posts (BreadMoments insights) Panel ── -->
+            <section class="account-panel<?php echo $activePanelOnLoad === 'my-posts' ? ' is-active' : ''; ?>" id="my-posts" data-account-panel>
+                <div class="account-panel-heading">
+                    <div>
+                        <span class="eyebrow">BreadMoments insights</span>
+                        <h2>My Posts</h2>
+                        <p>Every BreadMoment you shared, with views, likes, and comments.</p>
+                    </div>
+                    <a class="btn btn-primary" href="/BreadBreak/moments.php?create=1"><i class="fa-solid fa-plus"></i> Create Post</a>
+                </div>
+
+                <div class="moment-insight-grid">
+                    <div class="moment-insight-card"><i class="fa-solid fa-camera-retro"></i><strong><?php echo (int) $momentTotals['posts']; ?></strong><span>Posts</span></div>
+                    <div class="moment-insight-card"><i class="fa-solid fa-eye"></i><strong><?php echo (int) $momentTotals['views']; ?></strong><span>Total views</span></div>
+                    <div class="moment-insight-card"><i class="fa-solid fa-heart"></i><strong><?php echo (int) $momentTotals['likes']; ?></strong><span>Total likes</span></div>
+                    <div class="moment-insight-card"><i class="fa-solid fa-comment"></i><strong><?php echo (int) $momentTotals['comments']; ?></strong><span>Total comments</span></div>
+                </div>
+
+                <?php if (!$momentPosts): ?>
+                <div class="shop-empty">
+                    <i class="fa-solid fa-camera-retro"></i>
+                    <p>You haven't shared a BreadMoment yet.</p>
+                    <a class="btn btn-primary" href="/BreadBreak/moments.php?create=1"><i class="fa-solid fa-plus"></i> Create your first post</a>
+                </div>
+                <?php else: ?>
+                <div class="moment-insight-list">
+                    <?php foreach ($momentPosts as $momentPostRow): ?>
+                    <a class="moment-insight-row" href="/BreadBreak/moment.php?id=<?php echo (int) $momentPostRow['id']; ?>">
+                        <span class="moment-insight-thumb">
+                            <?php if ($momentPostRow['photo_id']): ?>
+                            <img src="/BreadBreak/api/moment-image.php?id=<?php echo (int) $momentPostRow['photo_id']; ?>" alt="" loading="lazy" />
+                            <?php else: ?>
+                            <i class="fa-solid fa-bread-slice"></i>
+                            <?php endif; ?>
+                        </span>
+                        <span class="moment-insight-body">
+                            <strong><?php echo htmlspecialchars($momentPostRow['title']); ?><?php if (($momentPostRow['moderation_status'] ?? 'visible') !== 'visible'): ?><?php [$momPillLabel, $momPillClass] = momentStatusLabel((string) $momentPostRow['moderation_status']); ?><span class="moment-insight-status <?php echo $momPillClass; ?>"><?php echo $momPillLabel; ?></span><?php endif; ?></strong>
+                            <?php if (($momentPostRow['moderation_status'] ?? '') === 'removed' && !empty($momentPostRow['moderation_reason'])): ?>
+                            <small class="moment-insight-reason"><i class="fa-solid fa-shield-halved"></i> <?php echo htmlspecialchars($momentPostRow['moderation_reason']); ?></small>
+                            <?php endif; ?>
+                            <small><?php echo date('M j, Y', strtotime($momentPostRow['created_at'])); ?></small>
+                        </span>
+                        <span class="moment-insight-stats">
+                            <span title="Views"><i class="fa-solid fa-eye"></i> <?php echo (int) $momentPostRow['views_count']; ?></span>
+                            <span title="Likes"><i class="fa-solid fa-heart"></i> <?php echo (int) $momentPostRow['like_count']; ?></span>
+                            <span title="Comments"><i class="fa-solid fa-comment"></i> <?php echo (int) $momentPostRow['comment_count']; ?></span>
+                        </span>
+                    </a>
+                    <?php endforeach; ?>
                 </div>
                 <?php endif; ?>
             </section>
