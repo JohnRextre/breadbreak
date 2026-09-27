@@ -127,6 +127,7 @@ function momentMigrate(PDO $pdo): void
     $momentModerationColumns = [
         'post_type'         => "ENUM('moment','promotion') NOT NULL DEFAULT 'moment' AFTER id",
         'product_id'        => "INT DEFAULT NULL AFTER category_id",
+        'order_id'          => "INT DEFAULT NULL AFTER product_id",
         'moderation_status' => "ENUM('visible','pending','rejected','removed') NOT NULL DEFAULT 'visible' AFTER views_count",
         'moderation_reason' => "VARCHAR(500) DEFAULT NULL AFTER moderation_status",
         'moderated_by'      => "INT DEFAULT NULL AFTER moderation_reason",

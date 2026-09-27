@@ -435,14 +435,30 @@ require __DIR__ . '/../includes/staff_header.php';
                                         </button>
                                     </form>
                                 <?php elseif ($action['kind'] === 'rider' && $fulfillment === 'delivery'): ?>
+                                    <?php
+                                    $currentRiderId = (int) ($o['rider_id'] ?? 0);
+                                    $currentRiderName = '';
+                                    foreach ($riders as $rider) {
+                                        if ((int) $rider['id'] === $currentRiderId) {
+                                            $currentRiderName = riderDisplayName($rider);
+                                            break;
+                                        }
+                                    }
+                                    ?>
                                     <form method="POST" class="order-rider-form">
                                         <input type="hidden" name="action" value="assign_rider" />
                                         <input type="hidden" name="order_id" value="<?php echo $oid; ?>" />
                                         <div class="status-select-wrap">
                                             <select name="rider_id" onchange="if (this.value) this.form.submit();">
-                                                <option value="0">Assign rider…</option>
+                                                <?php if ($currentRiderId > 0): ?>
+                                                    <option value="<?php echo $currentRiderId; ?>" selected><?php echo htmlspecialchars($currentRiderName); ?> (current)</option>
+                                                <?php else: ?>
+                                                    <option value="0" selected>Assign rider…</option>
+                                                <?php endif; ?>
                                                 <?php foreach ($riders as $rider): ?>
-                                                    <option value="<?php echo (int) $rider['id']; ?>"><?php echo htmlspecialchars(riderDisplayName($rider)); ?></option>
+                                                    <?php if ((int) $rider['id'] !== $currentRiderId): ?>
+                                                        <option value="<?php echo (int) $rider['id']; ?>"><?php echo htmlspecialchars(riderDisplayName($rider)); ?></option>
+                                                    <?php endif; ?>
                                                 <?php endforeach; ?>
                                             </select>
                                         </div>

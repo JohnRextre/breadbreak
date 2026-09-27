@@ -8,11 +8,19 @@
             <div>
                 <h4>Quick Links</h4>
                 <ul class="footer-links">
-                    <li><a href="/BreadBreak/index.php">Home</a></li>
-                    <li><a href="/BreadBreak/menu.php">Shop</a></li>
-                    <li><a href="/BreadBreak/moments.php">BreadMoments</a></li>
-                    <li><a href="/BreadBreak/about.php">About Us</a></li>
-                    <li><a href="/BreadBreak/contact.php">Contact</a></li>
+                    <?php if (isset($_SESSION['user_id']) && $_SESSION['role'] === 'customer'): ?>
+                        <li><a href="/BreadBreak/menu.php">Shop</a></li>
+                        <li><a href="/BreadBreak/moments.php">BreadMoments</a></li>
+                        <li><a href="/BreadBreak/customer/order-status.php">My Orders</a></li>
+                        <li><a href="/BreadBreak/customer/account.php">My Account</a></li>
+                        <li><a href="/BreadBreak/logout.php">Logout</a></li>
+                    <?php else: ?>
+                        <li><a href="/BreadBreak/index.php">Home</a></li>
+                        <li><a href="/BreadBreak/menu.php">Shop</a></li>
+                        <li><a href="/BreadBreak/moments.php">BreadMoments</a></li>
+                        <li><a href="/BreadBreak/about.php">About Us</a></li>
+                        <li><a href="/BreadBreak/contact.php">Contact</a></li>
+                    <?php endif; ?>
                 </ul>
             </div>
 

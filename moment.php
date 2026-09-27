@@ -127,7 +127,9 @@ if ($momentStatus !== 'visible' && !$momentIsOwn && !$momentIsAdmin) {
 }
 
 /* ── Count this view (once per visitor — live posts only) ─────────────── */
-if ($momentPdo && $momentStatus === 'visible') {
+// Only logged-in visitors who are NOT the post owner count as views.
+// Guests (not signed in) and the author viewing their own post are skipped.
+if ($momentPdo && $momentStatus === 'visible' && $momentIsSignedIn && !$momentIsOwn) {
     try {
         $momentViewInsert = $momentPdo->prepare(
             'INSERT IGNORE INTO bread_moment_views (moment_id, viewer_key) VALUES (:moment_id, :viewer_key)'

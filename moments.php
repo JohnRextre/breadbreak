@@ -143,6 +143,7 @@ $momentOld = [
     'title'       => '',
     'body'        => '',
     'category_id' => '',
+    'order_id'    => '',
     'topics'      => '',
 ];
 $momentPhotosNote = '';
@@ -168,6 +169,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $momentOld['title']       = trim((string) ($_POST['title'] ?? ''));
         $momentOld['body']        = trim((string) ($_POST['body'] ?? ''));
         $momentOld['category_id'] = (string) (int) ($_POST['category_id'] ?? 0);
+        $momentOld['order_id']    = (string) (int) ($_POST['order_id'] ?? 0);
         $momentOld['topics']      = trim((string) ($_POST['topics'] ?? ''));
         $momentTrap               = trim((string) ($_POST['website'] ?? ''));
 
@@ -203,14 +205,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$momentPdo) {
             $momentErrors['form'] = $momentDbError ?: 'We could not save your post just yet. Please try again.';
         } else {
-            $momentCategoryOk = false;
-            if ($momentOld['category_id'] !== '') {
-                $momentCategoryCheck = $momentPdo->prepare('SELECT id FROM menu_categories WHERE id = :id LIMIT 1');
-                $momentCategoryCheck->execute(['id' => (int) $momentOld['category_id']]);
-                $momentCategoryOk = (bool) $momentCategoryCheck->fetch();
+            // Validate the selected order belongs to this user, is completed,
+            // and has not been posted yet. Auto-assign category from the order.
+            $momentOrderOk = false;
+            if ($momentOld['order_id'] !== '') {
+                $momentOrderCheck = $momentPdo->prepare("
+                    SELECT o.id,
+                           (SELECT i.category_id
+                            FROM order_items oi2
+                            JOIN inventory_item_variants iv ON iv.id = oi2.variant_id
+                            JOIN inventory_items i ON i.id = iv.inventory_item_id
+                            WHERE oi2.order_id = o.id
+                            LIMIT 1) AS category_id
+                    FROM orders o
+                    WHERE o.id = :oid AND o.customer_id = :cid AND o.status = 'completed'
+                      AND o.id NOT IN (
+                          SELECT bm.order_id FROM bread_moments bm
+                          WHERE bm.order_id IS NOT NULL AND bm.user_id = :uid AND bm.id != :edit_id
+                      )
+                    LIMIT 1
+                ");
+                $momentOrderCheck->execute([
+                    'oid' => (int) $momentOld['order_id'],
+                    'cid' => $momentUserId,
+                    'uid' => $momentUserId,
+                    'edit_id' => $momentEditId,
+                ]);
+                $momentOrderRow = $momentOrderCheck->fetch();
+                if ($momentOrderRow) {
+                    $momentOrderOk = true;
+                    $momentOld['category_id'] = (string) (int) $momentOrderRow['category_id'];
+                }
             }
-            if (!$momentCategoryOk) {
-                $momentErrors['category_id'] = 'Select the menu category where this was baked.';
+            if (!$momentOrderOk) {
+                $momentErrors['order_id'] = 'Select a completed order from your Order History.';
             }
 
             if ($isEdit) {
@@ -243,10 +271,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 if ($isEdit) {
                     $momentUpdate = $momentPdo->prepare(
-                        'UPDATE bread_moments SET category_id = :category_id, title = :title, body = :body, topics = :topics WHERE id = :id AND user_id = :user_id AND post_type = \'moment\''
+                        'UPDATE bread_moments SET category_id = :category_id, order_id = :order_id, title = :title, body = :body, topics = :topics WHERE id = :id AND user_id = :user_id AND post_type = \'moment\''
                     );
                     $momentUpdate->execute([
                         'category_id' => $momentOld['category_id'] === '' ? null : (int) $momentOld['category_id'],
+                        'order_id'    => $momentOld['order_id'] === '' ? null : (int) $momentOld['order_id'],
                         'title'       => $momentOld['title'],
                         'body'        => $momentOld['body'],
                         'topics'      => implode(',', $momentTopicList),
@@ -274,11 +303,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $momentNoticeText = 'Your BreadMoment was updated.';
                 } else {
                     $momentInsert = $momentPdo->prepare(
-                        'INSERT INTO bread_moments (user_id, category_id, title, body, topics) VALUES (:user_id, :category_id, :title, :body, :topics)'
+                        'INSERT INTO bread_moments (user_id, category_id, order_id, title, body, topics) VALUES (:user_id, :category_id, :order_id, :title, :body, :topics)'
                     );
                     $momentInsert->execute([
                         'user_id'     => $momentUserId,
                         'category_id' => $momentOld['category_id'] === '' ? null : (int) $momentOld['category_id'],
+                        'order_id'    => $momentOld['order_id'] === '' ? null : (int) $momentOld['order_id'],
                         'title'       => $momentOld['title'],
                         'body'        => $momentOld['body'],
                         'topics'      => implode(',', $momentTopicList),
@@ -355,7 +385,7 @@ unset($_SESSION['moments_form']);
 $momentEditPhotos = [];
 if (!$momentRestoredEdit && $momentIsSignedIn && isset($_GET['edit'])) {
     $momentEditStatement = $momentPdo
-        ? $momentPdo->prepare('SELECT id, title, body, topics, category_id, post_type FROM bread_moments WHERE id = :id AND user_id = :user_id LIMIT 1')
+        ? $momentPdo->prepare('SELECT id, title, body, topics, category_id, order_id, post_type FROM bread_moments WHERE id = :id AND user_id = :user_id LIMIT 1')
         : null;
     if ($momentEditStatement) {
         $momentEditStatement->execute(['id' => (int) $_GET['edit'], 'user_id' => $momentUserId]);
@@ -380,6 +410,7 @@ if (!$momentRestoredEdit && $momentIsSignedIn && isset($_GET['edit'])) {
     $momentOld['title'] = (string) $momentEditRow['title'];
     $momentOld['body'] = (string) $momentEditRow['body'];
     $momentOld['category_id'] = (string) (int) $momentEditRow['category_id'];
+    $momentOld['order_id'] = (string) (int) ($momentEditRow['order_id'] ?? 0);
     $momentOld['topics'] = (string) $momentEditRow['topics'];
     $momentNext = ($_GET['next'] ?? '') === 'moment' ? 'moment' : 'feed';
 
@@ -430,6 +461,51 @@ if ($momentPdo) {
         ];
     }
 
+    // Completed orders available to post about (one post per order).
+    // When editing, the post's own order stays selectable.
+    $momentOrderOptions = [];
+    if ($momentIsSignedIn) {
+        $momentEditOrderId = $momentEditId > 0 ? (int) $momentOld['order_id'] : 0;
+        $momentOrderStmt = $momentPdo->prepare("
+            SELECT o.id, o.reference_id, o.created_at,
+                   GROUP_CONCAT(DISTINCT oi.product_name SEPARATOR ', ') AS items,
+                   (SELECT i.category_id
+                    FROM order_items oi2
+                    JOIN inventory_item_variants iv ON iv.id = oi2.variant_id
+                    JOIN inventory_items i ON i.id = iv.inventory_item_id
+                    WHERE oi2.order_id = o.id
+                    LIMIT 1) AS category_id
+            FROM orders o
+            JOIN order_items oi ON oi.order_id = o.id
+            WHERE o.customer_id = :cid
+              AND o.status = 'completed'
+              AND (
+                  o.id NOT IN (
+                      SELECT bm.order_id FROM bread_moments bm
+                      WHERE bm.order_id IS NOT NULL AND bm.user_id = :uid
+                  )
+                  OR o.id = :edit_oid
+              )
+            GROUP BY o.id, o.reference_id, o.created_at
+            ORDER BY o.id DESC
+            LIMIT 30
+        ");
+        $momentOrderStmt->execute([
+            'cid'    => $momentUserId,
+            'uid'    => $momentUserId,
+            'edit_oid' => $momentEditOrderId,
+        ]);
+        foreach ($momentOrderStmt->fetchAll() as $orderRow) {
+            $momentOrderOptions[] = [
+                'id'          => (int) $orderRow['id'],
+                'reference'   => (string) $orderRow['reference_id'],
+                'items'       => (string) $orderRow['items'],
+                'created_at'  => (string) $orderRow['created_at'],
+                'category_id' => (int) $orderRow['category_id'],
+            ];
+        }
+    }
+
     $momentWhere = [];
     $momentParams = [];
     // Only approved posts ever appear in the public feed.
@@ -457,12 +533,31 @@ if ($momentPdo) {
     $momentCountStatement->execute($momentParams);
     $momentTotalPosts = (int) $momentCountStatement->fetchColumn();
 
-    // "For you" stays chronological; "Top posts" ranks by likes + comments + views.
-    $momentOrderSql = $momentTab === 'top'
-        ? 'ORDER BY ((SELECT COUNT(*) FROM bread_moment_comments cc WHERE cc.moment_id = m.id)
+    // "For you" is randomized on each load; "Top posts" ranks by likes + comments + views.
+    if ($momentTab === 'top') {
+        $momentOrderSql = 'ORDER BY ((SELECT COUNT(*) FROM bread_moment_comments cc WHERE cc.moment_id = m.id)
                  + (SELECT COUNT(*) FROM bread_moment_likes l WHERE l.moment_id = m.id)
-                 + m.views_count) DESC, m.created_at DESC, m.id DESC'
-        : 'ORDER BY m.created_at DESC, m.id DESC';
+                 + m.views_count) DESC, m.created_at DESC, m.id DESC';
+    } else {
+        // Fast randomization: pick random IDs first, then join (avoids ORDER BY RAND() on full rows)
+        $momentRandomIds = [];
+        $momentIdStmt = $momentPdo->prepare("
+            SELECT m.id FROM bread_moments m
+            JOIN users u ON u.id = m.user_id
+            LEFT JOIN inventory_items pi ON pi.id = m.product_id
+            $momentWhereSql
+            LIMIT 200
+        ");
+        $momentIdStmt->execute($momentParams);
+        $momentRandomIds = array_map('intval', array_column($momentIdStmt->fetchAll(), 'id'));
+        if ($momentRandomIds) {
+            shuffle($momentRandomIds);
+            $momentRandomIds = array_slice($momentRandomIds, 0, 30);
+        }
+        $momentOrderSql = $momentRandomIds
+            ? 'ORDER BY FIELD(m.id, ' . implode(',', $momentRandomIds) . ')'
+            : 'ORDER BY m.created_at DESC';
+    }
 
     $momentPostStatement = $momentPdo->prepare("
         SELECT m.id, m.title, m.views_count, m.created_at, m.post_type, m.product_id,
@@ -497,7 +592,7 @@ if ($momentPdo) {
 }
 
 $momentAutoOpen = isset($_GET['create']) || $momentErrors || !empty($_GET['tips']) || $momentEditId > 0;
-$momentAutoTips = $momentErrors || !empty($_GET['tips']);
+$momentAutoTips = !empty($_GET['tips']);
 $momentIsEdit = $momentEditId > 0;
 ?>
 
@@ -761,30 +856,38 @@ $momentIsEdit = $momentEditId > 0;
             <span class="moment-field-error"><?php echo isset($momentErrors['body']) ? momentEscape($momentErrors['body']) : ''; ?></span>
 
             <div class="moment-starters">
-                <span class="moment-starters-label"><i class="fa-solid fa-wand-magic-sparkles"></i> Quick starters — tap to add</span>
-                <div class="moment-starter-chips">
-                    <?php foreach ($momentStarters as $momentStarter): ?>
-                    <button type="button" class="moment-starter" data-starter="<?php echo momentEscape($momentStarter['text']); ?>">
-                        <?php echo momentEscape($momentStarter['label']); ?>
+                <div class="moment-starters-head">
+                    <span class="moment-starters-label"><i class="fa-solid fa-wand-magic-sparkles"></i> Quick starters — tap to add</span>
+                    <button type="button" class="moment-starters-generate" id="momentStartersGenerate">
+                        <i class="fa-solid fa-rotate"></i> Generate
                     </button>
-                    <?php endforeach; ?>
                 </div>
+                <div class="moment-starter-chips" id="momentStarterChips"></div>
             </div>
         </div>
 
-        <!-- Category -->
-        <div class="moment-field<?php echo isset($momentErrors['category_id']) ? ' has-error' : ''; ?>">
-            <label for="moment-category">Baked in menu category <span class="req">*</span></label>
-            <select id="moment-category" name="category_id"
-                    aria-invalid="<?php echo isset($momentErrors['category_id']) ? 'true' : 'false'; ?>">
-                <option value="">Select a menu category</option>
-                <?php foreach ($momentCategories as $momentCategory): ?>
-                <option value="<?php echo (int) $momentCategory['id']; ?>"<?php echo $momentOld['category_id'] === (string) $momentCategory['id'] ? ' selected' : ''; ?>>
-                    <?php echo momentEscape($momentCategory['name']); ?>
+        <!-- Baked in — pick from completed Order History -->
+        <div class="moment-field<?php echo isset($momentErrors['order_id']) ? ' has-error' : ''; ?>">
+            <label for="moment-order">Baked in <span class="req">*</span></label>
+            <?php if ($momentOrderOptions): ?>
+            <select id="moment-order" name="order_id"
+                    aria-invalid="<?php echo isset($momentErrors['order_id']) ? 'true' : 'false'; ?>">
+                <option value="">Select from your completed orders</option>
+                <?php foreach ($momentOrderOptions as $momentOrderOption): ?>
+                <option value="<?php echo (int) $momentOrderOption['id']; ?>"<?php echo $momentOld['order_id'] === (string) $momentOrderOption['id'] ? ' selected' : ''; ?>>
+                    Order #<?php echo momentEscape($momentOrderOption['reference']); ?> — <?php echo momentEscape($momentOrderOption['items']); ?> (<?php echo date('M j, Y', strtotime($momentOrderOption['created_at'])); ?>)
                 </option>
                 <?php endforeach; ?>
             </select>
-            <span class="moment-field-error"><?php echo isset($momentErrors['category_id']) ? momentEscape($momentErrors['category_id']) : ''; ?></span>
+            <span class="moment-order-hint">Pick a completed order from your Order History. Each order can only be posted once.</span>
+            <?php else: ?>
+            <div class="moment-order-empty">
+                <i class="fa-solid fa-receipt"></i>
+                <p>No completed orders available to post about. Once an order is delivered, it will appear here for you to share.</p>
+            </div>
+            <?php endif; ?>
+            <span class="moment-field-error"><?php echo isset($momentErrors['order_id']) ? momentEscape($momentErrors['order_id']) : ''; ?></span>
+            <input type="hidden" id="moment-category" name="category_id" value="<?php echo momentEscape($momentOld['category_id']); ?>" />
         </div>
 
         <!-- Topics -->
@@ -976,10 +1079,40 @@ $momentIsEdit = $momentEditId > 0;
     renderPhotoPreviews();
     }
 
-    /* ── Quick starters → insert into the text field ── */
+    /* ── Quick starters → Generate button reveals 3 at a time ── */
     var bodyField = document.getElementById('moment-body');
-    Array.prototype.forEach.call(document.querySelectorAll('[data-starter]'), function (chip) {
-        chip.addEventListener('click', function () {
+    var starterChips = document.getElementById('momentStarterChips');
+    var generateBtn = document.getElementById('momentStartersGenerate');
+    var allStarters = <?php echo json_encode($momentStarters); ?>;
+    var currentStarters = [];
+
+    function renderStarters() {
+        if (!starterChips) return;
+        starterChips.innerHTML = '';
+        currentStarters.forEach(function (starter) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'moment-starter';
+            btn.setAttribute('data-starter', starter.text);
+            btn.textContent = starter.label;
+            starterChips.appendChild(btn);
+        });
+    }
+
+    if (generateBtn) {
+        generateBtn.addEventListener('click', function () {
+            // Pick 3 random starters (shuffled copy, first 3)
+            var shuffled = allStarters.slice().sort(function () { return 0.5 - Math.random(); });
+            currentStarters = shuffled.slice(0, 3);
+            renderStarters();
+        });
+    }
+
+    // Event delegation for dynamically generated starter chips
+    if (starterChips) {
+        starterChips.addEventListener('click', function (event) {
+            var chip = event.target.closest('[data-starter]');
+            if (!chip) return;
             var text = chip.getAttribute('data-starter');
             var start = bodyField.selectionStart === null ? bodyField.value.length : bodyField.selectionStart;
             var end = bodyField.selectionEnd === null ? bodyField.value.length : bodyField.selectionEnd;
@@ -990,7 +1123,7 @@ $momentIsEdit = $momentEditId > 0;
             bodyField.focus();
             bodyField.setSelectionRange(caret, caret);
         });
-    });
+    }
 
     /* ── Topics: #add a topic ── */
     var topicInput = document.getElementById('moment-topic-input');

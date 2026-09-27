@@ -575,9 +575,15 @@ require __DIR__ . '/../includes/header.php';
                             </dd>
                         </div>
                     <?php endif; ?>
+                    <?php if (!empty($row['delivery_landmark'])): ?>
+                        <div class="is-wide">
+                            <dt>Nearest Landmark</dt>
+                            <dd><?php echo nl2br(htmlspecialchars($row['delivery_landmark'])); ?></dd>
+                        </div>
+                    <?php endif; ?>
                     <?php if (!empty($row['notes'])): ?>
                         <div class="is-wide">
-                            <dt>Order notes</dt>
+                            <dt>Notes to Rider</dt>
                             <dd><?php echo nl2br(htmlspecialchars($row['notes'])); ?></dd>
                         </div>
                     <?php endif; ?>

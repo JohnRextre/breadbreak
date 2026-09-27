@@ -36,12 +36,22 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS orders (
     discount_name VARCHAR(150) NULL,
     delivery_fee DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     delivery_address TEXT NULL,
+    delivery_landmark VARCHAR(200) NULL,
+    delivery_notes TEXT NULL,
     total_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     notes TEXT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_order_customer FOREIGN KEY (customer_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE RESTRICT
 )");
+
+// Add delivery_landmark and delivery_notes columns if they don't exist (for existing tables)
+if (!$pdo->query("SHOW COLUMNS FROM orders LIKE 'delivery_landmark'")->fetch()) {
+    $pdo->exec("ALTER TABLE orders ADD COLUMN delivery_landmark VARCHAR(200) NULL AFTER delivery_address");
+}
+if (!$pdo->query("SHOW COLUMNS FROM orders LIKE 'delivery_notes'")->fetch()) {
+    $pdo->exec("ALTER TABLE orders ADD COLUMN delivery_notes TEXT NULL AFTER delivery_landmark");
+}
 
 // Saved Senior / PWD IDs live in My Account — surfaced here for one-tap selection
 $pdo->exec("CREATE TABLE IF NOT EXISTS customer_discount_ids (id INT PRIMARY KEY AUTO_INCREMENT, customer_id INT NOT NULL, id_type ENUM('senior','pwd') NOT NULL DEFAULT 'senior', id_number VARCHAR(100) NOT NULL, full_name VARCHAR(150) NOT NULL, is_default TINYINT(1) NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, UNIQUE KEY uq_customer_disc (customer_id, id_number), KEY idx_disc_customer (customer_id), CONSTRAINT fk_disc_customer FOREIGN KEY (customer_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
@@ -159,10 +169,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
 
     $fulfillmentType = in_array($_POST['fulfillment_type'] ?? '', ['delivery', 'pickup'], true) ? $_POST['fulfillment_type'] : 'delivery';
     $deliveryAddress = '';
+    $deliveryLandmark = trim($_POST['delivery_landmark'] ?? '');
+    $deliveryNotes = trim($_POST['delivery_notes'] ?? '');
     $deliveryFeePost = 0.00;
 
     if ($fulfillmentType === 'pickup') {
         $deliveryAddress = 'BreadBreak Bakery - Estrella Village, Guiguinto, Bulacan (Store Pickup)';
+        $deliveryLandmark = '';
+        $deliveryNotes = '';
         $deliveryFeePost = 0.00;
     } else {
         $deliveryAddress = trim($_POST['delivery_address'] ?? '');
@@ -293,11 +307,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
                 "INSERT INTO orders 
                     (customer_id, reference_id, status, fulfillment_type, subtotal, vatable_sales, vat_amount, vat_exempt_sales,
                      discount_type, discount_amount, discount_id_number, discount_name,
-                     delivery_fee, delivery_address, total_amount, payment_method, cash_amount)
+                     delivery_fee, delivery_address, delivery_landmark, delivery_notes, total_amount, payment_method, cash_amount)
                  VALUES 
                     (:cid, :ref, 'pending', :ftype, :sub, :vsales, :vamt, :vexempt,
                      :dtype, :damt, :did, :dname,
-                     :fee, :addr, :total, :pm, :ca)"
+                     :fee, :addr, :landmark, :notes, :total, :pm, :ca)"
             )->execute([
                 'cid'      => $customerId,
                 'ref'      => $referenceId,
@@ -312,6 +326,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
                 'dname'    => $discountName,
                 'fee'      => $deliveryFeePost,
                 'addr'     => $deliveryAddress,
+                'landmark' => $deliveryLandmark !== '' ? $deliveryLandmark : null,
+                'notes'    => $deliveryNotes !== '' ? $deliveryNotes : null,
                 'total'    => $grandTotal,
                 'pm'       => $paymentMethod,
                 'ca'       => $paymentMethod === 'CASH' ? $cashAmountRaw : null,
@@ -391,6 +407,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
                     'currency'       => 'PHP',
                     'request_amount' => $grandTotal,
                     'capture_method' => 'AUTOMATIC',
+                    'channel_code'   => 'CREDIT_CARD',
                     'payment_method' => [
                         'type'        => 'CARD',
                         'reusability' => 'ONE_TIME_USE',
@@ -719,6 +736,27 @@ $pageTitle = 'Checkout | BreadBreak';
                     <div id="zone-check-result" class="zone-check-result" aria-live="polite" style="display:none;"></div>
                 <?php endif; ?>
 
+                <!-- Nearest Landmark & Notes to Rider (shown for both saved and free-text addresses) -->
+                <div style="margin-top:1rem;">
+                    <label class="delivery-address-label" for="delivery-landmark-input">
+                        Nearest Landmark <span style="color:var(--muted);font-weight:600;">(Optional)</span>
+                    </label>
+                    <input type="text" id="delivery-landmark-input" name="delivery_landmark" class="delivery-address-textarea"
+                        placeholder="e.g. Near Guiguinto Public Market, beside St. Ildefonso Church"
+                        maxlength="200"
+                        value="<?php echo htmlspecialchars($_POST['delivery_landmark'] ?? ''); ?>" />
+                    <p class="checkout-map-edit-hint">Help your rider find your place faster.</p>
+
+                    <label class="delivery-address-label" for="delivery-notes-input" style="margin-top:.75rem;">
+                        Notes to Rider <span style="color:var(--muted);font-weight:600;">(Optional)</span>
+                    </label>
+                    <textarea id="delivery-notes-input" name="delivery_notes" class="delivery-address-textarea" rows="2"
+                        placeholder="e.g. Ring the doorbell twice, look for the blue gate, call if gate is locked"
+                        maxlength="500"
+                    ><?php echo htmlspecialchars($_POST['delivery_notes'] ?? ''); ?></textarea>
+                    <p class="checkout-map-edit-hint">Special instructions for your rider (gate code, floor, etc.).</p>
+                </div>
+
                 </div>
             </div>
 
@@ -909,9 +947,9 @@ $pageTitle = 'Checkout | BreadBreak';
                             </div>
                         </label>
 
-                        <!-- Credit / Debit Card -->
-                        <label class="pay-method-card" data-method="CARD">
-                            <input type="radio" name="pay_method_radio" value="CARD" hidden />
+                        <!-- Credit / Debit Card (disabled in TEST MODE — not supported by Xendit PH) -->
+                        <label class="pay-method-card is-disabled" data-method="CARD" title="Card payments are not available in test mode">
+                            <input type="radio" name="pay_method_radio" value="CARD" hidden disabled />
                             <div class="pay-radio-circle"></div>
                             <div class="pay-logo-box pay-logo-card">
                                 <img src="/BreadBreak/assets/images/payments/card.svg" alt="Credit / Debit Card" class="pay-brand-img" />
@@ -920,6 +958,7 @@ $pageTitle = 'Checkout | BreadBreak';
                                 <div class="pay-card-name">Credit / Debit Card</div>
                                 <div class="pay-card-desc">Visa &amp; Mastercard</div>
                             </div>
+                            <span class="pay-tag-unavailable">Unavailable</span>
                         </label>
 
                         <!-- Cash -->

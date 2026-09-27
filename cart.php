@@ -129,7 +129,6 @@ unset($_SESSION['cart_notice'], $_SESSION['cart_error']);
                 <p>Browse the menu and add your favorites — they'll show up right here.</p>
                 <div class="cart-empty-actions">
                     <a class="btn btn-primary" href="/BreadBreak/menu.php"><i class="fa-solid fa-bread-slice"></i> Browse Products</a>
-                    <a class="btn btn-secondary" href="/BreadBreak/index.php">Back to Home</a>
                 </div>
             </div>
         <?php else: ?>
