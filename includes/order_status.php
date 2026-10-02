@@ -469,6 +469,12 @@ function applyOrderStatus(
 
     $pdo->prepare('UPDATE orders SET ' . implode(', ', $sets) . ' WHERE id = :id')->execute($params);
 
+    // Cancelled orders give the voucher back so the customer can use it again.
+    if ($to === 'cancelled' && $from !== 'cancelled') {
+        require_once __DIR__ . '/vouchers.php';
+        restoreVoucherForOrder($pdo, $orderId);
+    }
+
     logOrderStatusChange($pdo, $orderId, $from, $to, $actor, $note);
 
     return [

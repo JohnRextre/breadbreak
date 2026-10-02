@@ -1227,6 +1227,57 @@
 }
 
 /* --------------------------------------------------------------------------
+   Voucher Code Entry
+   -------------------------------------------------------------------------- */
+.voucher-code-row {
+    display: flex;
+    gap: .6rem;
+    margin-top: .9rem;
+}
+.voucher-code-row input {
+    flex: 1;
+    min-width: 0;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: .55rem .8rem;
+    font-family: inherit;
+    font-size: .9rem;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    font-weight: 600;
+    color: var(--brown-900);
+}
+.voucher-code-row input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(201, 121, 64, 0.12);
+}
+.voucher-code-row button {
+    border: none;
+    border-radius: 8px;
+    padding: .55rem 1.1rem;
+    background: var(--accent);
+    color: #fff;
+    font-family: inherit;
+    font-size: .88rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    transition: opacity .15s ease, transform .15s ease;
+    white-space: nowrap;
+}
+.voucher-code-row button:hover:not(:disabled) {
+    opacity: .92;
+    transform: translateY(-1px);
+}
+.voucher-code-row button:disabled {
+    opacity: .6;
+    cursor: not-allowed;
+}
+
+/* --------------------------------------------------------------------------
    Checkout Layout Structure
    -------------------------------------------------------------------------- */
 .checkout-main {

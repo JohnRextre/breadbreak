@@ -45,7 +45,8 @@ if (isset($_GET['skipped'])) {
 $ordersStmt = $pdo->prepare(
     "SELECT o.id, o.reference_id, o.status, o.fulfillment_type, o.subtotal,
             o.vat_amount, o.vat_exempt_sales, o.discount_type, o.discount_amount,
-            o.discount_id_number, o.discount_name, o.delivery_fee, o.total_amount,
+            o.discount_id_number, o.discount_name, o.voucher_code, o.voucher_discount,
+            o.delivery_fee, o.total_amount,
             o.payment_method, o.cash_amount, o.collected_amount, o.collected_at,
             o.delivery_address, o.notes, o.created_at, o.rider_id,
             o.review_acknowledged_at, o.proof_captured_at, o.proof_note,
@@ -493,6 +494,14 @@ require __DIR__ . '/../includes/header.php';
                     <?php endif; ?>
                     <?php if ((float) $row['delivery_fee'] > 0): ?>
                         <div><span>Delivery fee</span><strong>₱<?php echo number_format((float) $row['delivery_fee'], 2); ?></strong></div>
+                    <?php endif; ?>
+                    <?php if (!empty($row['voucher_code'])): ?>
+                        <div class="is-discount">
+                            <span><i class="fa-solid fa-ticket"></i> Voucher · <?php echo htmlspecialchars($row['voucher_code']); ?></span>
+                            <strong><?php echo (float) ($row['voucher_discount'] ?? 0) > 0
+                                ? '−₱' . number_format((float) $row['voucher_discount'], 2)
+                                : 'Free Delivery'; ?></strong>
+                        </div>
                     <?php endif; ?>
                     <div class="is-total"><span>Total</span><strong>₱<?php echo number_format($total, 2); ?></strong></div>
                 </div>

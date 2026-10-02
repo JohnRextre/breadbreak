@@ -579,6 +579,26 @@ if ($momentPdo) {
         }
     }
 
+    // Promoted vouchers: the ad post, its code, and whether this viewer claimed it.
+    $momentPromoVouchers = [];
+    $momentClaimedVouchers = [];
+    $momentClaimed = !empty($_SESSION['user_id']) && ($_SESSION['role'] ?? '') === 'customer';
+    if ($momentPdo && $momentPosts) {
+        try {
+            require_once __DIR__ . '/includes/voucher_promotion.php';
+            $momentPromoVouchers = promotedVouchersByMoment($momentPdo, array_column($momentPosts, 'id'));
+            if ($momentPromoVouchers) {
+                $momentClaimedVouchers = claimedPromotedVoucherIds(
+                    $momentPdo,
+                    (int) ($_SESSION['user_id'] ?? 0),
+                    array_column($momentPromoVouchers, 'voucher_id')
+                );
+            }
+        } catch (Throwable) {
+            $momentPromoVouchers = [];
+        }
+    }
+
     $momentTopicCounts = [];
     foreach ($momentPdo->query("SELECT topics FROM bread_moments WHERE topics <> '' AND moderation_status = 'visible' ORDER BY created_at DESC LIMIT 60") as $momentTopicRow) {
         foreach (explode(',', (string) $momentTopicRow['topics']) as $momentTopicName) {
@@ -714,7 +734,40 @@ $momentIsEdit = $momentEditId > 0;
                         $momentCardPhoto = $momentFirstPhotos[$momentPost['id']] ?? 0;
                         $momentPostInitial = strtoupper(substr(trim((string) $momentPost['first_name']), 0, 1)) ?: '?';
                         $momentCardPromo = ($momentPost['post_type'] ?? 'moment') === 'promotion';
+                        // Promoted vouchers get a Claim card — no likes, no comments.
+                        $momentCardVoucher = $momentPromoVouchers[(int) $momentPost['id']] ?? null;
                     ?>
+                    <?php if ($momentCardVoucher): ?>
+                    <?php $momentVoucherClaimed = in_array((int) $momentCardVoucher['voucher_id'], $momentClaimedVouchers, true); ?>
+                    <div class="moment-card is-promotion is-voucher-promo">
+                        <a class="moment-card-media" href="/BreadBreak/moment.php?id=<?php echo (int) $momentPost['id']; ?>">
+                            <span class="moment-promo-badge"><i class="fa-solid fa-ticket"></i> Free Delivery</span>
+                            <?php if ($momentCardPhoto): ?>
+                                <img src="/BreadBreak/api/moment-image.php?id=<?php echo (int) $momentCardPhoto; ?>"
+                                     alt="<?php echo momentEscape($momentPost['title']); ?>" loading="lazy" />
+                            <?php else: ?>
+                                <i class="fa-solid fa-bread-slice" aria-hidden="true"></i>
+                            <?php endif; ?>
+                        </a>
+                        <a class="moment-card-title" href="/BreadBreak/moment.php?id=<?php echo (int) $momentPost['id']; ?>">
+                            <?php echo momentEscape($momentPost['title']); ?>
+                        </a>
+                        <span class="moment-voucher-code"><i class="fa-solid fa-ticket"></i> <?php echo momentEscape($momentCardVoucher['code']); ?></span>
+                        <span class="moment-card-foot">
+                            <span class="moment-avatar moment-avatar-store" aria-hidden="true"><i class="fa-solid fa-store"></i></span>
+                            <span class="moment-author"><?php echo momentEscape(MOMENT_STORE_NAME); ?></span>
+                        </span>
+                        <?php if ($momentVoucherClaimed): ?>
+                        <span class="moment-claim-btn is-claimed" aria-label="Voucher already claimed"><i class="fa-solid fa-circle-check"></i> Claimed</span>
+                        <?php else: ?>
+                        <button type="button" class="moment-claim-btn" data-claim-voucher="<?php echo (int) $momentCardVoucher['voucher_id']; ?>"
+                                data-signed-in="<?php echo $momentClaimed ? '1' : '0'; ?>">
+                            <i class="fa-solid fa-ticket"></i> Claim
+                        </button>
+                        <?php endif; ?>
+                        <span class="moment-claim-note" data-claim-note hidden></span>
+                    </div>
+                    <?php else: ?>
                     <a class="moment-card<?php echo $momentCardPromo ? ' is-promotion' : ''; ?>" href="/BreadBreak/moment.php?id=<?php echo (int) $momentPost['id']; ?>">
                         <span class="moment-card-media">
                             <?php if ($momentCardPromo): ?>
@@ -747,6 +800,7 @@ $momentIsEdit = $momentEditId > 0;
                             <span class="moment-views" title="Views"><i class="fa-solid fa-eye"></i> <?php echo (int) $momentPost['views_count']; ?></span>
                         </span>
                     </a>
+                    <?php endif; ?>
                     <?php endforeach; ?>
                 </div>
             <?php endif; ?>
@@ -922,6 +976,8 @@ $momentIsEdit = $momentEditId > 0;
     </div>
     <?php endif; ?>
 </div>
+
+<script src="/BreadBreak/assets/js/voucher-claim.js?v=<?php echo file_exists(__DIR__ . '/assets/js/voucher-claim.js') ? filemtime(__DIR__ . '/assets/js/voucher-claim.js') : time(); ?>"></script>
 
 <script>
 (function () {

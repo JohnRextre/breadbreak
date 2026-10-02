@@ -190,6 +190,10 @@ try {
                 $actor,
                 'Payment ' . $dbPaymentStatus . ' via Xendit.'
             );
+
+            // Payment fell through, so the customer gets their voucher back.
+            require_once __DIR__ . '/../includes/vouchers.php';
+            restoreVoucherForOrder($pdo, $orderId);
         }
     }
 

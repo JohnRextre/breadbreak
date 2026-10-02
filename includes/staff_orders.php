@@ -25,6 +25,7 @@ function orderSelectSql(string $statusWhere = ''): string
     return "SELECT o.id, o.reference_id, o.status AS order_status, o.created_at, o.notes,
                    o.fulfillment_type, o.subtotal, o.vat_amount, o.vat_exempt_sales,
                    o.discount_type, o.discount_amount, o.discount_id_number, o.discount_name,
+                   o.voucher_code, o.voucher_discount,
                    o.delivery_fee, o.delivery_address, o.total_amount, o.payment_method, o.cash_amount,
                    o.collected_amount, o.collected_at, o.proof_note, o.proof_captured_at,
                    (o.proof_photo_data IS NOT NULL) AS has_proof, o.rider_id, o.customer_id,

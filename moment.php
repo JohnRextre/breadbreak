@@ -116,6 +116,29 @@ if (!$momentPost) {
 $momentIsOwn = $momentIsSignedIn && (int) $momentPost['user_id'] === $momentUserId;
 $momentStatus = (string) ($momentPost['moderation_status'] ?? 'visible');
 $momentIsPromo = ($momentPost['post_type'] ?? 'moment') === 'promotion';
+
+// A voucher promotion is an ad, not a conversation: comments and likes are off
+// and the only action is Claiming the voucher.
+$momentVoucher = null;
+$momentVoucherClaimed = false;
+$momentClaimable = $momentIsSignedIn && ($_SESSION['role'] ?? '') === 'customer';
+if ($momentIsPromo && $momentPdo) {
+    try {
+        require_once __DIR__ . '/includes/voucher_promotion.php';
+        $momentPromoMap = promotedVouchersByMoment($momentPdo, [(int) $momentPost['id']]);
+        $momentVoucher = $momentPromoMap[(int) $momentPost['id']] ?? null;
+        if ($momentVoucher && $momentClaimable) {
+            $momentVoucherClaimed = in_array(
+                (int) $momentVoucher['voucher_id'],
+                claimedPromotedVoucherIds($momentPdo, (int) $_SESSION['user_id'], [(int) $momentVoucher['voucher_id']]),
+                true
+            );
+        }
+    } catch (Throwable) {
+        $momentVoucher = null;
+    }
+}
+$momentIsVoucherAd = $momentVoucher !== null;
 $momentIsAdmin = (($_SESSION['role'] ?? '') === 'admin');
 
 // Hidden posts (waiting for review, rejected or removed) answer only to their
@@ -320,6 +343,30 @@ unset($_SESSION['moment_notice']);
                     <p class="moment-detail-text"><?php echo nl2br(momentEscape($momentPost['body'])); ?></p>
                 </section>
 
+                <?php if ($momentIsVoucherAd): ?>
+                <section class="moment-detail-section">
+                    <span class="moment-detail-label"><i class="fa-solid fa-ticket"></i> Free delivery voucher</span>
+                    <p class="moment-voucher-detail-code"><?php echo momentEscape($momentVoucher['code']); ?></p>
+                    <div class="moment-voucher-claim">
+                        <?php if ($momentVoucherClaimed): ?>
+                            <span class="moment-claim-btn is-claimed"><i class="fa-solid fa-circle-check"></i> Added to your account</span>
+                        <?php else: ?>
+                            <button type="button" class="moment-claim-btn" data-claim-voucher="<?php echo (int) $momentVoucher['voucher_id']; ?>"
+                                    data-signed-in="<?php echo $momentClaimable ? '1' : '0'; ?>">
+                                <i class="fa-solid fa-ticket"></i> Claim this voucher
+                            </button>
+                        <?php endif; ?>
+                        <span class="moment-claim-note" data-claim-note hidden></span>
+                    </div>
+                    <?php if ((float) ($momentVoucher['min_spend'] ?? 0) > 0): ?>
+                        <p class="moment-voucher-fineprint">Minimum spend ₱<?php echo number_format((float) $momentVoucher['min_spend'], 2); ?><?php
+                            echo !empty($momentVoucher['valid_until']) ? ' · offer ends ' . date('M j, Y', strtotime((string) $momentVoucher['valid_until'])) : ''; ?>.</p>
+                    <?php elseif (!empty($momentVoucher['valid_until'])): ?>
+                        <p class="moment-voucher-fineprint">Offer ends <?php echo date('M j, Y', strtotime((string) $momentVoucher['valid_until'])); ?>.</p>
+                    <?php endif; ?>
+                </section>
+                <?php endif; ?>
+
                 <?php if ($momentIsPromo && !empty($momentPost['product_name'])): ?>
                 <div class="moment-detail-tags">
                     <span class="moment-detail-label"><i class="fa-solid fa-star"></i> Promoting</span>
@@ -350,6 +397,7 @@ unset($_SESSION['moment_notice']);
                 <?php endif; ?>
             </div>
 
+            <?php if (!$momentIsVoucherAd): ?>
             <!-- Likes total sits ABOVE the like icon row -->
             <footer class="moment-detail-foot">
                 <p class="moment-likes-row"><i class="fa-solid fa-heart"></i> <b id="momentLikeCount"><?php echo $momentLikeCount; ?></b> like<?php echo $momentLikeCount === 1 ? '' : 's'; ?></p>
@@ -370,9 +418,11 @@ unset($_SESSION['moment_notice']);
                     <?php endif; ?>
                 </div>
             </footer>
+            <?php endif; ?>
         </article>
 
-        <!-- Comments -->
+        <!-- Comments — voucher ads are announcements, not conversations -->
+        <?php if (!$momentIsVoucherAd): ?>
         <section class="moment-comments" id="momentComments">
             <h2 class="moment-comments-title">
                 <i class="fa-regular fa-comments"></i> Comments <span id="momentCommentCount">(<?php echo $momentCommentCount; ?>)</span>
@@ -404,6 +454,7 @@ unset($_SESSION['moment_notice']);
                 <?php endforeach; ?>
             </ol>
         </section>
+        <?php endif; ?>
     </div>
 </main>
 
@@ -440,6 +491,8 @@ unset($_SESSION['moment_notice']);
         <button type="button" class="btn btn-danger" id="bbConfirmOk">Delete</button>
     </div>
 </div>
+
+<script src="/BreadBreak/assets/js/voucher-claim.js?v=<?php echo file_exists(__DIR__ . '/assets/js/voucher-claim.js') ? filemtime(__DIR__ . '/assets/js/voucher-claim.js') : time(); ?>"></script>
 
 <script>
 (function () {

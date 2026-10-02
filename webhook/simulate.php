@@ -107,6 +107,10 @@ if ($dbPaymentStatus === 'paid') {
 } else {
     $pdo->prepare("UPDATE orders SET status = 'cancelled', updated_at = NOW() WHERE id = :oid")
         ->execute(['oid' => $orderId]);
+
+    // Cancelled orders give the voucher back to the customer.
+    require_once __DIR__ . '/../includes/vouchers.php';
+    restoreVoucherForOrder($pdo, $orderId);
 }
 
 $pdo->commit();

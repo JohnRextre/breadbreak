@@ -114,6 +114,14 @@ $drawerIndex = 'hx';
                     <?php if ((float) $o['delivery_fee'] > 0): ?>
                         <div><span>Delivery fee</span><strong>₱<?php echo number_format((float) $o['delivery_fee'], 2); ?></strong></div>
                     <?php endif; ?>
+                    <?php if (!empty($o['voucher_code'])): ?>
+                        <div class="is-discount">
+                            <span><i class="fa-solid fa-ticket"></i> Voucher · <?php echo htmlspecialchars($o['voucher_code']); ?></span>
+                            <strong><?php echo (float) ($o['voucher_discount'] ?? 0) > 0
+                                ? '−₱' . number_format((float) $o['voucher_discount'], 2)
+                                : 'Free Delivery'; ?></strong>
+                        </div>
+                    <?php endif; ?>
                     <div class="is-total"><span>Total</span><strong>₱<?php echo number_format($total, 2); ?></strong></div>
                 </div>
             </section>
@@ -274,9 +282,11 @@ $drawerIndex = 'hx';
                                 <input type="hidden" name="action" value="assign_rider" />
                                 <input type="hidden" name="order_id" value="<?php echo $oid; ?>" />
                                 <select name="rider_id" required>
-                                    <option value="">Reassign rider…</option>
+                                    <option value="<?php echo (int) $o['rider_id']; ?>" selected><?php echo htmlspecialchars($riderName); ?> (current)</option>
                                     <?php foreach ($riders as $rider): ?>
-                                        <option value="<?php echo (int) $rider['id']; ?>"><?php echo htmlspecialchars(riderDisplayName($rider)); ?></option>
+                                        <?php if ((int) $rider['id'] !== (int) $o['rider_id']): ?>
+                                            <option value="<?php echo (int) $rider['id']; ?>"><?php echo htmlspecialchars(riderDisplayName($rider)); ?></option>
+                                        <?php endif; ?>
                                     <?php endforeach; ?>
                                 </select>
                                 <button class="order-action-btn is-ghost" type="submit">Reassign</button>

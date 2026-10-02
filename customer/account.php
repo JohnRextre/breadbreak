@@ -293,6 +293,37 @@ $discountIdStmt = $pdo->prepare(
 $discountIdStmt->execute(['cid' => $customerId]);
 $savedDiscountIds = $discountIdStmt->fetchAll();
 
+// ── My Vouchers ──────────────────────────────────────────────────────────────
+require_once __DIR__ . '/../includes/vouchers.php';
+$myVouchers = ['available' => [], 'used' => [], 'expired' => []];
+try {
+    ensureVoucherTables($pdo);
+    $vouchersStmt = $pdo->prepare(
+        "SELECT cv.id AS grant_id, cv.status AS grant_status, cv.source, cv.expires_at, cv.used_at, cv.order_id, cv.created_at,
+                v.code, v.title, v.description, v.discount_type, v.status AS voucher_status, v.valid_until
+         FROM customer_vouchers cv
+         JOIN vouchers v ON v.id = cv.voucher_id
+         WHERE cv.customer_id = :cid
+         ORDER BY cv.created_at DESC, cv.id DESC"
+    );
+    $vouchersStmt->execute(['cid' => $customerId]);
+    $nowTs = time();
+    foreach ($vouchersStmt->fetchAll() as $vrow) {
+        $grantExpired = !empty($vrow['expires_at']) && strtotime((string) $vrow['expires_at']) < $nowTs;
+        $voucherDead  = $vrow['voucher_status'] !== 'active'
+            || (!empty($vrow['valid_until']) && strtotime((string) $vrow['valid_until']) < $nowTs);
+        if ($vrow['grant_status'] === 'used') {
+            $myVouchers['used'][] = $vrow;
+        } elseif ($grantExpired || $voucherDead || $vrow['grant_status'] === 'expired') {
+            $myVouchers['expired'][] = $vrow;
+        } else {
+            $myVouchers['available'][] = $vrow;
+        }
+    }
+} catch (Throwable) {
+    // Voucher tables may not exist yet — panel shows the empty state.
+}
+
 // Load favorite products (heart icon in the Shop)
 $favoritesStmt = $pdo->prepare(
     "SELECT i.id, i.name, i.description, c.name AS category_name,
@@ -353,7 +384,7 @@ if ($favoritesPanelActive) $activePanelOnLoad = 'my-favorites';
 // Deep links such as account.php?panel=my-favorites (used after sign-in)
 $requestedPanel = (string) ($_GET['panel'] ?? '');
 if (!$passwordPanelActive && !$addressPanelActive && !$discountPanelActive && !$favoritesPanelActive
-    && in_array($requestedPanel, ['personal-details', 'my-addresses', 'discount-ids', 'my-favorites', 'my-posts', 'password-security'], true)) {
+    && in_array($requestedPanel, ['personal-details', 'my-addresses', 'discount-ids', 'my-vouchers', 'my-favorites', 'my-posts', 'password-security'], true)) {
     $activePanelOnLoad = $requestedPanel;
 }
 
@@ -361,6 +392,7 @@ $accountSections = [
     ['id' => 'personal-details', 'icon' => 'fa-user', 'title' => 'Personal Details', 'description' => 'Manage your name and contact information.'],
     ['id' => 'my-addresses',     'icon' => 'fa-location-dot', 'title' => 'My Addresses', 'description' => 'Save addresses for faster checkout.'],
     ['id' => 'discount-ids',     'icon' => 'fa-id-card', 'title' => 'Senior / PWD ID', 'description' => 'Keep your discount IDs ready for checkout.'],
+    ['id' => 'my-vouchers',      'icon' => 'fa-ticket', 'title' => 'My Vouchers', 'description' => 'Your free delivery vouchers and promo perks.'],
     ['id' => 'my-favorites',     'icon' => 'fa-heart', 'title' => 'My Favorites', 'description' => 'Everything you tapped the heart on.'],
     ['id' => 'my-posts',         'icon' => 'fa-camera-retro', 'title' => 'My Posts', 'description' => 'Your BreadMoments and how they perform.'],
     ['id' => 'account-activities', 'icon' => 'fa-clock-rotate-left', 'title' => 'Account Activities', 'description' => 'Review activity from your BreadBreak account.', 'disabled' => true],
@@ -613,6 +645,91 @@ require __DIR__ . '/../includes/header.php';
                     <i class="fa-solid fa-circle-info"></i>
                     <span><strong>Verification Policy:</strong> Please present the physical Senior Citizen / PWD ID upon receiving the order for verification.</span>
                 </div>
+            </section>
+
+            <!-- ── My Vouchers Panel ── -->
+            <section class="account-panel<?php echo $activePanelOnLoad === 'my-vouchers' ? ' is-active' : ''; ?>" id="my-vouchers" data-account-panel>
+                <div class="account-panel-heading">
+                    <div>
+                        <span class="eyebrow">Checkout perks</span>
+                        <h2>My Vouchers</h2>
+                        <p>Free delivery vouchers and promo perks you've collected. Apply them during checkout.</p>
+                    </div>
+                    <a class="addr-btn addr-btn-default" href="/BreadBreak/menu.php"><i class="fa-solid fa-bag-shopping"></i> Order Now</a>
+                </div>
+
+                <?php if (!empty($myVouchers['available'])): ?>
+                <h3 class="voucher-group-title"><i class="fa-solid fa-ticket"></i> Available (<?php echo count($myVouchers['available']); ?>)</h3>
+                <div class="discount-id-list">
+                    <?php foreach ($myVouchers['available'] as $v): ?>
+                    <div class="discount-id-card voucher-card is-voucher-available">
+                        <div class="discount-id-icon voucher-icon"><i class="fa-solid <?php echo $v['discount_type'] === 'free_delivery' ? 'fa-truck-fast' : 'fa-tag'; ?>"></i></div>
+                        <div class="discount-id-body">
+                            <div class="discount-id-head">
+                                <span class="discount-id-type"><?php echo htmlspecialchars($v['code']); ?></span>
+                                <?php if ($v['source'] === 'welcome'): ?><span class="address-default-badge"><i class="fa-solid fa-gift"></i> Welcome treat</span><?php endif; ?>
+                            </div>
+                            <strong class="discount-id-number" style="font-size:.98rem;"><?php echo htmlspecialchars($v['title']); ?></strong>
+                            <span class="discount-id-name">
+                                <?php if (!empty($v['description'])): ?><?php echo htmlspecialchars($v['description']); ?><br><?php endif; ?>
+                                <?php if (!empty($v['expires_at'])): ?>
+                                    <i class="fa-regular fa-clock"></i> Valid until <?php echo date('M j, Y', strtotime($v['expires_at'])); ?>
+                                <?php endif; ?>
+                            </span>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+                <?php endif; ?>
+
+                <?php if (empty($myVouchers['available']) && empty($myVouchers['used']) && empty($myVouchers['expired'])): ?>
+                <div class="address-empty">
+                    <i class="fa-solid fa-ticket"></i>
+                    <p>No vouchers yet. New accounts get a <strong>Free Delivery welcome voucher</strong>, and watch out for promo codes on our page!</p>
+                    <a class="addr-btn addr-btn-default" href="/BreadBreak/menu.php"><i class="fa-solid fa-store"></i> Browse the Shop</a>
+                </div>
+                <?php elseif (empty($myVouchers['available'])): ?>
+                <div class="address-empty">
+                    <i class="fa-solid fa-ticket"></i>
+                    <p>No available vouchers right now. Watch out for new promo codes!</p>
+                </div>
+                <?php endif; ?>
+
+                <?php if (!empty($myVouchers['used'])): ?>
+                <h3 class="voucher-group-title" style="margin-top:1.4rem;"><i class="fa-solid fa-circle-check"></i> Used (<?php echo count($myVouchers['used']); ?>)</h3>
+                <div class="discount-id-list">
+                    <?php foreach ($myVouchers['used'] as $v): ?>
+                    <div class="discount-id-card voucher-card is-voucher-done">
+                        <div class="discount-id-icon voucher-icon"><i class="fa-solid fa-check"></i></div>
+                        <div class="discount-id-body">
+                            <div class="discount-id-head">
+                                <span class="discount-id-type"><?php echo htmlspecialchars($v['code']); ?></span>
+                            </div>
+                            <strong class="discount-id-number" style="font-size:.98rem;"><?php echo htmlspecialchars($v['title']); ?></strong>
+                            <span class="discount-id-name">Used <?php echo !empty($v['used_at']) ? date('M j, Y', strtotime($v['used_at'])) : ''; ?></span>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+                <?php endif; ?>
+
+                <?php if (!empty($myVouchers['expired'])): ?>
+                <h3 class="voucher-group-title" style="margin-top:1.4rem;"><i class="fa-solid fa-hourglass-end"></i> Expired (<?php echo count($myVouchers['expired']); ?>)</h3>
+                <div class="discount-id-list">
+                    <?php foreach ($myVouchers['expired'] as $v): ?>
+                    <div class="discount-id-card voucher-card is-voucher-done">
+                        <div class="discount-id-icon voucher-icon"><i class="fa-solid fa-hourglass-end"></i></div>
+                        <div class="discount-id-body">
+                            <div class="discount-id-head">
+                                <span class="discount-id-type"><?php echo htmlspecialchars($v['code']); ?></span>
+                            </div>
+                            <strong class="discount-id-number" style="font-size:.98rem;"><?php echo htmlspecialchars($v['title']); ?></strong>
+                            <span class="discount-id-name">Expired<?php echo !empty($v['expires_at']) ? ' ' . date('M j, Y', strtotime($v['expires_at'])) : ''; ?></span>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+                <?php endif; ?>
             </section>
 
             <!-- ── My Favorites Panel ── -->

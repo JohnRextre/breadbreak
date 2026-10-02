@@ -15,6 +15,7 @@ $statusFilter = trim($_GET['status'] ?? 'all');
 
 $query = "SELECT o.id, o.reference_id, o.status AS order_status, o.created_at,
                  o.fulfillment_type, o.delivery_fee, o.delivery_address, o.discount_type, o.discount_amount, o.discount_id_number, o.discount_name,
+                 o.voucher_code, o.voucher_discount,
                  u.first_name, u.last_name, u.email, u.phone,
                  p.amount, p.payment_method, p.payment_channel, p.status AS payment_status
           FROM orders o
@@ -30,8 +31,15 @@ if ($statusFilter !== 'all' && in_array($statusFilter, ['pending', 'processing',
 }
 
 if ($search !== '') {
-    $query .= " AND (o.reference_id LIKE :search OR u.first_name LIKE :search OR u.last_name LIKE :search OR u.email LIKE :search)";
-    $params['search'] = '%' . $search . '%';
+    // Native prepared statements (EMULATE_PREPARES = off) reject a repeated
+    // named placeholder, so every LIKE gets its own bind key.
+    $query .= " AND (o.reference_id LIKE :search_ref OR u.first_name LIKE :search_first
+                 OR u.last_name LIKE :search_last OR u.email LIKE :search_email)";
+    $like = '%' . $search . '%';
+    $params['search_ref']   = $like;
+    $params['search_first'] = $like;
+    $params['search_last']  = $like;
+    $params['search_email'] = $like;
 }
 
 $query .= " ORDER BY o.id DESC";
@@ -220,6 +228,11 @@ require __DIR__ . '/../includes/admin_header.php';
                             </div>
                             <?php if ((float)($o['delivery_fee'] ?? 0) > 0): ?>
                                 <small style="display: block; font-size: 10px; color: var(--admin-muted);">+ ₱<?php echo number_format((float) $o['delivery_fee'], 2); ?> Del.</small>
+                            <?php endif; ?>
+                            <?php if (!empty($o['voucher_code'])): ?>
+                                <small style="display: inline-block; font-size: 10px; font-weight: 700; color: #1a6645; background: #e8f7ef; padding: 1px 7px; border-radius: 100px; margin-top: 2px;">
+                                    <i class="fa-solid fa-ticket" style="font-size: 9px;"></i> <?php echo htmlspecialchars($o['voucher_code']); ?>
+                                </small>
                             <?php endif; ?>
                             <span class="order-pay-channel">
                                 <i class="fa-solid fa-mobile-screen"></i> GCash

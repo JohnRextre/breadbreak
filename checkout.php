@@ -16,8 +16,10 @@ if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'customer') {
 requireRole('customer');
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/config/xendit.php';
+require_once __DIR__ . '/includes/vouchers.php';
 
 $pdo = getDatabaseConnection();
+ensureVoucherTables($pdo);
 
 // ── Ensure tables & columns exist ──
 $pdo->exec("CREATE TABLE IF NOT EXISTS orders (
@@ -64,6 +66,9 @@ $savedDiscountIdStmt = $pdo->prepare(
 );
 $savedDiscountIdStmt->execute(['cid' => $customerId]);
 $savedDiscountIds = $savedDiscountIdStmt->fetchAll();
+
+// Vouchers the customer can still redeem (unused, unexpired, active)
+$usableVouchers = getUsableCustomerVouchers($pdo, $customerId);
 
 // ── Load cart items with FRESH prices from DB ──
 $cartItems  = [];
@@ -245,6 +250,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
         }
     }
 
+    // ── Voucher (optional) — validated server-side, never trust the client ──
+    $voucherCodePost = strtoupper(trim((string) ($_POST['voucher_code'] ?? '')));
+    $voucherResult   = null;
+    $voucherDiscount = 0.00;
+
+    if (!$checkoutError && $voucherCodePost !== '') {
+        $voucherResult = validateVoucherForOrder($pdo, $voucherCodePost, $customerId, $cartTotal, $fulfillmentType);
+        if (!$voucherResult['ok']) {
+            $checkoutError = $voucherResult['error'];
+            $voucherResult = null;
+        }
+    }
+
     // ── Payment method ──
     $allowedMethods = ['GCASH', 'PAYMAYA', 'GRABPAY', 'SHOPEEPAY', 'CARD', 'CASH'];
     $paymentMethod  = strtoupper(trim($_POST['payment_method'] ?? 'GCASH'));
@@ -279,6 +297,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
         $netItemsTotal    = $subtotal;
     }
 
+    // Voucher effect: free delivery zeroes the fee; percent/fixed shave the items total.
+    if ($voucherResult) {
+        $vType = (string) ($voucherResult['voucher']['discount_type'] ?? 'free_delivery');
+        if ($vType === 'free_delivery') {
+            $voucherDiscount  = (float) $deliveryFeePost;
+            $deliveryFeePost  = 0.00;
+        } elseif ($vType === 'percent') {
+            $pct = max(0.0, (float) $voucherResult['voucher']['discount_value']);
+            $voucherDiscount = round($netItemsTotal * ($pct / 100), 2);
+            $maxDisc = $voucherResult['voucher']['max_discount'];
+            if ($maxDisc !== null && (float) $maxDisc > 0) {
+                $voucherDiscount = min($voucherDiscount, (float) $maxDisc);
+            }
+            $voucherDiscount = min($voucherDiscount, $netItemsTotal);
+            $netItemsTotal   = round($netItemsTotal - $voucherDiscount, 2);
+        } elseif ($vType === 'fixed') {
+            $voucherDiscount = min(max(0.0, (float) $voucherResult['voucher']['discount_value']), $netItemsTotal);
+            $netItemsTotal   = round($netItemsTotal - $voucherDiscount, 2);
+        }
+    }
+
     $grandTotal = round($netItemsTotal + $deliveryFeePost, 2);
 
     // Validate cash amount AFTER grand total is known
@@ -304,13 +343,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
         try {
             $referenceId = generateReferenceId();
             $pdo->prepare(
-                "INSERT INTO orders 
+                "INSERT INTO orders
                     (customer_id, reference_id, status, fulfillment_type, subtotal, vatable_sales, vat_amount, vat_exempt_sales,
-                     discount_type, discount_amount, discount_id_number, discount_name,
+                     discount_type, discount_amount, discount_id_number, discount_name, voucher_code, voucher_discount,
                      delivery_fee, delivery_address, delivery_landmark, delivery_notes, total_amount, payment_method, cash_amount)
-                 VALUES 
+                 VALUES
                     (:cid, :ref, 'pending', :ftype, :sub, :vsales, :vamt, :vexempt,
-                     :dtype, :damt, :did, :dname,
+                     :dtype, :damt, :did, :dname, :vcode, :vdisc,
                      :fee, :addr, :landmark, :notes, :total, :pm, :ca)"
             )->execute([
                 'cid'      => $customerId,
@@ -324,6 +363,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
                 'damt'     => $discountAmount,
                 'did'      => $discountIdNumber,
                 'dname'    => $discountName,
+                'vcode'    => $voucherResult ? $voucherCodePost : null,
+                'vdisc'    => $voucherDiscount,
                 'fee'      => $deliveryFeePost,
                 'addr'     => $deliveryAddress,
                 'landmark' => $deliveryLandmark !== '' ? $deliveryLandmark : null,
@@ -333,6 +374,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
                 'ca'       => $paymentMethod === 'CASH' ? $cashAmountRaw : null,
             ]);
             $orderId = (int) $pdo->lastInsertId();
+
+            // Mark the voucher as used in the SAME transaction as the order —
+            // atomic, so a voucher can never be double-redeemed or lost.
+            if ($voucherResult) {
+                redeemVoucherForOrder($pdo, $voucherResult['voucher'], $voucherResult['grant'], $customerId, $orderId);
+            }
 
             $insertItem = $pdo->prepare(
                 "INSERT INTO order_items
@@ -364,13 +411,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
 
             // ── CASH: skip Xendit, log payment locally ──
             if ($paymentMethod === 'CASH') {
+                // xendit_payment_request_id is UNIQUE — cash has no Xendit ID, so
+                // use a unique local placeholder instead of '' (a second cash order
+                // would otherwise violate the constraint and roll the order back).
                 $pdo->prepare(
                     "INSERT INTO payments
                         (order_id, xendit_payment_request_id, reference_id, amount, currency,
                          payment_method, payment_channel, status, xendit_raw_response)
-                     VALUES (:oid, '', :ref, :amt, 'PHP', 'CASH', 'CASH', 'pending', '')"
+                     VALUES (:oid, :xid, :ref, :amt, 'PHP', 'CASH', 'CASH', 'pending', '')"
                 )->execute([
                     'oid' => $orderId,
+                    'xid' => 'CASH-' . $referenceId,
                     'ref' => $referenceId,
                     'amt' => $grandTotal,
                 ]);
@@ -396,6 +447,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
             $description = implode(', ', $descParts);
             $description .= ($fulfillmentType === 'pickup' ? ' [Pickup]' : ' [Delivery]');
             if ($discountType !== 'none') $description .= ' [' . strtoupper($discountType) . ' Disc]';
+            if ($voucherResult) $description .= ' [Voucher ' . $voucherCodePost . ']';
             if (strlen($description) > 255) $description = substr($description, 0, 252) . '...';
 
             if ($paymentMethod === 'CARD') {
@@ -880,6 +932,62 @@ $pageTitle = 'Checkout | BreadBreak';
                 </div>
             </div>
 
+            <!-- ── Vouchers Card ── -->
+            <div class="checkout-card" id="voucher-card" style="margin-top:1.5rem;">
+                <div class="checkout-card-header" style="display:flex;align-items:center;justify-content:space-between;">
+                    <h2><i class="fa-solid fa-ticket" style="margin-right:.5rem;color:var(--accent)"></i>Vouchers</h2>
+                    <span style="font-size:.78rem;color:var(--muted);font-weight:600;">Optional</span>
+                </div>
+                <div class="checkout-card-body">
+                    <?php if (!empty($usableVouchers)): ?>
+                    <div class="saved-id-picker" id="voucher-picker">
+                        <div class="saved-id-picker-head">
+                            <span><i class="fa-solid fa-ticket"></i> Your Available Vouchers</span>
+                            <a href="/BreadBreak/customer/account.php?panel=my-vouchers">My Vouchers</a>
+                        </div>
+                        <div class="saved-id-list">
+                            <?php foreach ($usableVouchers as $uv): ?>
+                            <button type="button"
+                                class="saved-id-chip voucher-chip"
+                                data-voucher-code="<?php echo htmlspecialchars($uv['code']); ?>"
+                                data-voucher-title="<?php echo htmlspecialchars($uv['title']); ?>"
+                                data-voucher-type="<?php echo htmlspecialchars($uv['discount_type']); ?>">
+                                <i class="fa-solid <?php echo $uv['discount_type'] === 'free_delivery' ? 'fa-truck-fast' : 'fa-tag'; ?>"></i>
+                                <span class="saved-id-chip-body">
+                                    <strong><?php echo htmlspecialchars($uv['title']); ?></strong>
+                                    <small><?php echo htmlspecialchars($uv['code']); ?><?php echo !empty($uv['grant_expires_at']) ? ' · until ' . date('M j, Y', strtotime($uv['grant_expires_at'])) : ''; ?></small>
+                                </span>
+                            </button>
+                            <?php endforeach; ?>
+                        </div>
+                        <p class="saved-id-picker-hint"><i class="fa-solid fa-hand-pointer"></i> Tap a voucher to apply it to this order.</p>
+                    </div>
+                    <?php endif; ?>
+
+                    <div class="voucher-code-row">
+                        <input type="text" id="voucher-code-input" placeholder="Enter promo code" maxlength="50"
+                            value="<?php echo htmlspecialchars($_POST['voucher_code'] ?? ''); ?>" />
+                        <button type="button" id="voucher-apply-btn"><i class="fa-solid fa-check"></i> Apply</button>
+                    </div>
+                    <span class="input-feedback-msg" id="voucher-feedback"></span>
+
+                    <div id="voucher-applied-box" style="display:none;margin-top:.75rem;padding:.7rem .95rem;background:#e8f7ef;border:1.5px solid #a3d9bc;border-radius:10px;align-items:center;justify-content:space-between;gap:.6rem;">
+                        <span style="display:flex;align-items:center;gap:.5rem;font-size:.88rem;color:#166534;font-weight:700;">
+                            <i class="fa-solid fa-circle-check" style="font-size:1.05rem;"></i>
+                            <span id="voucher-applied-text">Voucher applied</span>
+                        </span>
+                        <button type="button" id="voucher-remove-btn" style="background:none;border:none;color:#891515;font-weight:700;font-size:.82rem;cursor:pointer;font-family:inherit;">
+                            <i class="fa-solid fa-xmark"></i> Remove
+                        </button>
+                    </div>
+
+                    <p style="font-size:.78rem;color:var(--muted);margin:.75rem 0 0;" id="voucher-delivery-note">
+                        <i class="fa-solid fa-circle-info" style="margin-right:.3rem;"></i>
+                        Free delivery vouchers apply to <strong>delivery</strong> orders only — they don't apply to store pickup (already free).
+                    </p>
+                </div>
+            </div>
+
             <!-- ── 6. Payment Method Card (Modern E-Commerce Design) ── -->
             <div class="checkout-card" id="payment-method-card">
                 <div class="checkout-card-header" style="display:flex;align-items:center;justify-content:space-between;">
@@ -1084,6 +1192,12 @@ $pageTitle = 'Checkout | BreadBreak';
                     <span id="summary-delivery-fee" style="color:var(--muted);">—</span>
                 </div>
 
+                <!-- Voucher Row -->
+                <div class="summary-row" id="summary-voucher-row" style="display:none;color:#1a6645;font-weight:600;">
+                    <span><i class="fa-solid fa-ticket" style="margin-right:.3rem;font-size:.85em;"></i>Voucher (<span id="summary-voucher-code"></span>)</span>
+                    <span id="summary-voucher-amount">-₱0.00</span>
+                </div>
+
                 <!-- Grand Total Row -->
                 <div class="summary-row total-row">
                     <span>Total to Pay</span>
@@ -1112,6 +1226,9 @@ $pageTitle = 'Checkout | BreadBreak';
                     <input type="hidden" name="discount_type" id="hidden-discount-type" value="none" />
                     <input type="hidden" name="discount_id_number" id="hidden-discount-id-number" value="" />
                     <input type="hidden" name="discount_name" id="hidden-discount-name" value="" />
+
+                    <!-- Hidden voucher field -->
+                    <input type="hidden" name="voucher_code" id="hidden-voucher-code" value="<?php echo htmlspecialchars($_POST['voucher_code'] ?? ''); ?>" />
 
                     <!-- Hidden payment fields -->
                     <input type="hidden" name="payment_method" id="hidden-payment-method" value="GCASH" />
@@ -1216,6 +1333,7 @@ $pageTitle = 'Checkout | BreadBreak';
     let lastChecked = '';
     let usingOtherAddr = false;
     let lastSavedRadio = null;
+    let appliedVoucher = null; // { code, title, type } — null when no voucher applied
 
     // ── Helpers ───────────────────────────────────────────────────────────────
     function formatPHP(amount) {
@@ -1253,8 +1371,30 @@ $pageTitle = 'Checkout | BreadBreak';
         }
 
         const fee = currentFulfillment === 'pickup' ? 0 : (currentDeliveryFee !== null ? currentDeliveryFee : 0);
-        const totalToPay = netItemsTotal + fee;
+        let voucherSavings = 0;
+        if (appliedVoucher && appliedVoucher.type === 'free_delivery' && currentFulfillment === 'delivery') {
+            voucherSavings = fee;
+        }
+        const totalToPay = Math.max(0, netItemsTotal + fee - voucherSavings);
         grandTotalEl.textContent = formatPHP(totalToPay);
+
+        // Voucher summary row
+        const voucherRow       = document.getElementById('summary-voucher-row');
+        const voucherRowCode   = document.getElementById('summary-voucher-code');
+        const voucherRowAmount = document.getElementById('summary-voucher-amount');
+        if (voucherRow) {
+            if (appliedVoucher) {
+                voucherRow.style.display = 'flex';
+                if (voucherRowCode) voucherRowCode.textContent = appliedVoucher.code;
+                if (voucherRowAmount) {
+                    voucherRowAmount.textContent = voucherSavings > 0
+                        ? '-' + formatPHP(voucherSavings)
+                        : 'Free Delivery';
+                }
+            } else {
+                voucherRow.style.display = 'none';
+            }
+        }
 
         if (typeof validateCashInput === 'function') {
             validateCashInput();
@@ -1411,6 +1551,13 @@ $pageTitle = 'Checkout | BreadBreak';
         currentFulfillment = mode;
         hiddenFulfill.value = mode;
 
+        // Free delivery vouchers don't make sense on pickup (already free),
+        // so switching modes clears any applied voucher.
+        if (mode === 'pickup' && appliedVoucher && typeof clearVoucher === 'function') {
+            clearVoucher('Voucher removed — vouchers apply to delivery orders only.');
+            if (voucherCodeInput) voucherCodeInput.value = '';
+        }
+
         const cashCardTitle = document.getElementById('cash-card-title');
         const cashCardDesc  = document.getElementById('cash-card-desc');
         const cashNoteText  = document.getElementById('cash-note-text');
@@ -1564,6 +1711,130 @@ $pageTitle = 'Checkout | BreadBreak';
             discountNameInput.addEventListener('input', checkNameInput);
             discountNameInput.addEventListener('blur', checkNameInput);
         }
+    }
+
+    // ── Voucher Handling ──────────────────────────────────────────────────────
+    const voucherChips       = document.querySelectorAll('.voucher-chip');
+    const voucherCodeInput   = document.getElementById('voucher-code-input');
+    const voucherApplyBtn    = document.getElementById('voucher-apply-btn');
+    const voucherFeedback    = document.getElementById('voucher-feedback');
+    const voucherAppliedBox  = document.getElementById('voucher-applied-box');
+    const voucherAppliedText = document.getElementById('voucher-applied-text');
+    const voucherRemoveBtn   = document.getElementById('voucher-remove-btn');
+    const hiddenVoucherCode  = document.getElementById('hidden-voucher-code');
+
+    function setVoucherFeedback(msg, isError) {
+        if (!voucherFeedback) return;
+        voucherFeedback.textContent = msg || '';
+        voucherFeedback.className = 'input-feedback-msg' + (msg ? (isError ? ' is-error' : ' is-valid') : '');
+    }
+
+    function markSelectedVoucherChip(code) {
+        voucherChips.forEach(function (chip) {
+            chip.classList.toggle('is-selected', !!code && chip.dataset.voucherCode === code);
+        });
+    }
+
+    function applyVoucher(data) {
+        appliedVoucher = {
+            code:  (data.code || '').toUpperCase(),
+            title: data.title || data.code || 'Voucher',
+            type:  data.discount_type || 'free_delivery',
+        };
+        if (hiddenVoucherCode) hiddenVoucherCode.value = appliedVoucher.code;
+        if (voucherCodeInput)  voucherCodeInput.value  = appliedVoucher.code;
+        markSelectedVoucherChip(appliedVoucher.code);
+        if (voucherAppliedBox && voucherAppliedText) {
+            voucherAppliedText.textContent = appliedVoucher.title + ' (' + appliedVoucher.code + ') applied';
+            voucherAppliedBox.style.display = 'flex';
+        }
+        recalculateTotal();
+        updateOrderButtonState();
+    }
+
+    function clearVoucher(message) {
+        appliedVoucher = null;
+        if (hiddenVoucherCode) hiddenVoucherCode.value = '';
+        markSelectedVoucherChip(null);
+        if (voucherAppliedBox) voucherAppliedBox.style.display = 'none';
+        setVoucherFeedback(message || '', false);
+        recalculateTotal();
+        updateOrderButtonState();
+    }
+
+    async function requestVoucher(code) {
+        code = (code || '').trim().toUpperCase();
+        if (!code) {
+            setVoucherFeedback('Please enter a voucher code first.', true);
+            return;
+        }
+        if (currentFulfillment === 'pickup') {
+            setVoucherFeedback('Vouchers apply to delivery orders only.', true);
+            return;
+        }
+        if (voucherApplyBtn) {
+            voucherApplyBtn.disabled = true;
+            voucherApplyBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+        }
+        setVoucherFeedback('Checking voucher…', false);
+        try {
+            const resp = await fetch('/BreadBreak/api/vouchers/validate.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code: code, subtotal: cartSubtotal, fulfillment: currentFulfillment }),
+            });
+            const data = await resp.json();
+            if (data.ok) {
+                applyVoucher(data);
+                setVoucherFeedback(data.message || 'Voucher applied!', false);
+            } else {
+                clearVoucher('');
+                setVoucherFeedback(data.message || 'This voucher cannot be used right now.', true);
+            }
+        } catch (err) {
+            // Network hiccup — keep the code; the server re-validates on submit.
+            setVoucherFeedback('Unable to verify the voucher right now. It will be checked again when you place your order.', true);
+        } finally {
+            if (voucherApplyBtn) {
+                voucherApplyBtn.disabled = false;
+                voucherApplyBtn.innerHTML = '<i class="fa-solid fa-check"></i> Apply';
+            }
+        }
+    }
+
+    voucherChips.forEach(function (chip) {
+        chip.addEventListener('click', function () {
+            if (appliedVoucher && appliedVoucher.code === chip.dataset.voucherCode) {
+                clearVoucher(); // tap the same chip again to remove it
+            } else {
+                requestVoucher(chip.dataset.voucherCode);
+            }
+        });
+    });
+
+    if (voucherApplyBtn) {
+        voucherApplyBtn.addEventListener('click', function () {
+            requestVoucher(voucherCodeInput ? voucherCodeInput.value : '');
+        });
+    }
+    if (voucherCodeInput) {
+        voucherCodeInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                requestVoucher(this.value);
+            }
+        });
+    }
+    if (voucherRemoveBtn) {
+        voucherRemoveBtn.addEventListener('click', function () {
+            clearVoucher();
+            if (voucherCodeInput) voucherCodeInput.value = '';
+        });
+    }
+
+    // Restore an applied voucher after a server-side validation error repost.
+    if (hiddenVoucherCode && hiddenVoucherCode.value && currentFulfillment === 'delivery') {
+        requestVoucher(hiddenVoucherCode.value);
     }
 
     // ── Zone check API call ───────────────────────────────────────────────────

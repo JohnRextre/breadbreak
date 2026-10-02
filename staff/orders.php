@@ -86,6 +86,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $statusError = 'Store pickup orders do not need a rider.';
             } elseif ($riderId <= 0 || $riderName === '') {
                 $statusError = 'Choose a rider to assign.';
+            } elseif ($riderId === (int) $order['rider_id']) {
+                // Reassigning to the SAME rider is pointless — the drawer no longer
+                // offers it, but guard the POST handler too.
+                $statusError = $riderName . ' is already the assigned rider on order #' . $ref . '.';
             } else {
                 $previousRider = (int) $order['rider_id'];
                 $pdo->prepare('UPDATE orders SET rider_id = :rid, updated_at = NOW() WHERE id = :id')

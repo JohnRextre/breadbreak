@@ -20,7 +20,7 @@ if ($ref) {
     // Load order (must belong to this customer)
     $oStmt = $pdo->prepare(
         "SELECT id, reference_id, status, fulfillment_type, subtotal, vatable_sales, vat_amount, vat_exempt_sales,
-                discount_type, discount_amount, discount_id_number, discount_name,
+                discount_type, discount_amount, discount_id_number, discount_name, voucher_code, voucher_discount,
                 delivery_fee, delivery_address, total_amount, payment_method, cash_amount, created_at
          FROM orders
          WHERE reference_id = :ref AND customer_id = :cid LIMIT 1"
@@ -330,6 +330,14 @@ require __DIR__ . '/includes/header.php';
                 <div>
                     <dt>Delivery fee</dt>
                     <dd>₱<?php echo number_format((float) $order['delivery_fee'], 2); ?></dd>
+                </div>
+                <?php endif; ?>
+                <?php if (!empty($order['voucher_code'])): ?>
+                <div>
+                    <dt>Voucher (<?php echo htmlspecialchars($order['voucher_code']); ?>)</dt>
+                    <dd><?php echo (float) ($order['voucher_discount'] ?? 0) > 0
+                        ? '-₱' . number_format((float) $order['voucher_discount'], 2)
+                        : 'Free Delivery'; ?></dd>
                 </div>
                 <?php endif; ?>
                 <div class="is-total">

@@ -64,6 +64,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]);
 
                 $successMessage = 'Account created successfully!';
+
+                // Welcome treat: one-time Free Delivery voucher, valid 30 days.
+                try {
+                    require_once __DIR__ . '/includes/vouchers.php';
+                    $newCustomerId = (int) $pdo->lastInsertId();
+                    if ($newCustomerId > 0) {
+                        $welcomeVoucherId = ensureWelcomeVoucher($pdo);
+                        if (grantVoucherToCustomer($pdo, $welcomeVoucherId, $newCustomerId, 'welcome', date('Y-m-d H:i:s', strtotime('+30 days')))) {
+                            $successMessage = 'Account created successfully! You also received a FREE DELIVERY welcome voucher — valid for 30 days on your first order.';
+                        }
+                    }
+                } catch (Throwable) {
+                    // Voucher grant is a bonus — never block a successful signup.
+                }
             }
         } catch (Throwable $e) {
             $errors['database'] = 'Unable to create the account right now.';

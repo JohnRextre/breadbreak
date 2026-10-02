@@ -279,6 +279,8 @@ body.admin-body { margin: 0; background: var(--admin-cream); color: var(--admin-
    Orders Management Styles (Admin & Staff)
    ========================================================================== */
 .orders-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
+/* Six KPI cards (Reports) read better as a balanced 3x2 block. */
+.orders-summary-grid.is-triplet { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .orders-summary-grid .summary-card { background: #fffdfb; border: 1px solid var(--admin-line); border-radius: 12px; padding: 20px; box-shadow: 0 4px 14px rgba(39, 29, 23, 0.04); transition: transform 0.2s, box-shadow 0.2s; }
 .orders-summary-grid .summary-card:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(39, 29, 23, 0.08); }
 .orders-summary-grid .summary-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
@@ -322,7 +324,7 @@ body.admin-body { margin: 0; background: var(--admin-cream); color: var(--admin-
 .status-chip.is-failed, .status-chip.is-cancelled { background: #fde8e8; color: #891515; border: 1px solid #f5a3a3; }
 
 @media (max-width: 992px) {
-    .orders-summary-grid { grid-template-columns: repeat(2, 1fr); }
+    .orders-summary-grid, .orders-summary-grid.is-triplet { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 600px) {
     .orders-summary-grid { grid-template-columns: 1fr; }
@@ -467,3 +469,451 @@ body.admin-body { margin: 0; background: var(--admin-cream); color: var(--admin-
     .mod-steps { flex-direction: column; }
     .mod-steps li { border-radius: 10px; }
 }
+
+/* --------------------------------------------------------------------------
+   Voucher Manager
+   -------------------------------------------------------------------------- */
+.voucher-stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
+.voucher-stat-card { display: flex; align-items: center; gap: 14px; padding: 16px 18px; background: #fff; border: 1px solid var(--admin-line); border-radius: 10px; box-shadow: 0 4px 18px rgba(67, 49, 38, .035); }
+.voucher-stat-icon { display: grid; place-items: center; flex: 0 0 42px; width: 42px; height: 42px; border-radius: 11px; font-size: 17px; }
+.voucher-stat-icon.is-total { color: var(--admin-brown); background: #f4e9e1; }
+.voucher-stat-icon.is-active { color: var(--admin-green); background: #eef8f1; }
+.voucher-stat-icon.is-used { color: var(--admin-blue); background: var(--admin-blue-soft); }
+.voucher-stat-icon.is-unused { color: var(--admin-orange); background: #fff5e6; }
+.voucher-stat-card strong { display: block; font-family: 'Manrope', sans-serif; font-size: 21px; line-height: 1.1; }
+.voucher-stat-card span { display: block; margin-top: 3px; color: var(--admin-muted); font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+
+.vouchers-layout { display: grid; grid-template-columns: 390px minmax(0, 1fr); gap: 18px; align-items: start; }
+
+.voucher-form-card { position: sticky; top: 20px; }
+.vf-section-label { display: flex; align-items: center; gap: 10px; margin: 22px 0 12px; color: var(--admin-muted); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.vf-section-label:first-child { margin-top: 0; }
+.vf-section-label::after { content: ''; flex: 1; height: 1px; background: var(--admin-line); }
+.vf-field { display: block; margin-bottom: 13px; }
+.vf-field > span { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 700; }
+.vf-field > span em { color: #bd5447; font-style: normal; }
+.vf-field small { display: block; margin-top: 5px; color: var(--admin-muted); font-size: 11px; font-weight: 400; }
+.vf-input { width: 100%; min-width: 0; padding: 10px 12px; border: 1.5px solid var(--admin-line); border-radius: 8px; background: #fff; color: var(--admin-ink); font: inherit; font-size: 13px; transition: border-color .15s, box-shadow .15s; }
+.vf-input:focus { outline: none; border-color: var(--admin-brown); box-shadow: 0 0 0 3px rgba(133, 88, 63, .12); }
+.vf-input.is-code { font-family: 'Manrope', sans-serif; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.vf-grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.vf-grid-2 .vf-field { margin-bottom: 0; min-width: 0; }
+.vf-grid-2 .vf-input { min-width: 0; width: 100%; }
+
+.vf-toggle { display: flex; align-items: center; gap: 12px; padding: 12px 13px; border: 1.5px solid var(--admin-line); border-radius: 8px; background: #fff; cursor: pointer; transition: border-color .15s, background .15s; }
+.vf-toggle:hover { border-color: #d8cdc4; }
+.vf-toggle input { display: none; }
+.vf-toggle-track { position: relative; flex: 0 0 40px; width: 40px; height: 23px; border-radius: 100px; background: #ddd3cb; transition: background .2s; }
+.vf-toggle-track::after { content: ''; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); transition: left .2s; }
+.vf-toggle input:checked + .vf-toggle-track { background: var(--admin-green); }
+.vf-toggle input:checked + .vf-toggle-track::after { left: 20px; }
+.vf-toggle-text strong { display: block; font-size: 12px; }
+.vf-toggle-text small { display: block; margin-top: 2px; color: var(--admin-muted); font-size: 11px; }
+
+.vf-hint { display: flex; gap: 10px; margin: 18px 0; padding: 12px 13px; border: 1px solid #cde4f0; border-radius: 8px; background: var(--admin-blue-soft); color: #315c73; font-size: 11.5px; line-height: 1.55; }
+.vf-hint i { margin-top: 2px; }
+.vf-submit { width: 100%; min-height: 46px; font-size: 13px; }
+
+/* ── Voucher ticket cards ── */
+.voucher-ticket { display: flex; margin-bottom: 14px; overflow: hidden; background: #fff; border: 1px solid var(--admin-line); border-radius: 12px; box-shadow: 0 4px 18px rgba(67, 49, 38, .04); transition: transform .18s, box-shadow .18s; }
+.voucher-ticket:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(67, 49, 38, .09); }
+.voucher-ticket.is-inactive { opacity: .6; }
+.voucher-ticket.is-inactive .vt-stub { background: linear-gradient(160deg, #a89a90, #8a7a70); }
+
+.vt-stub { position: relative; flex: 0 0 116px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 20px 10px; background: linear-gradient(160deg, var(--admin-brown) 0%, var(--admin-brown-dark) 100%); color: #fff; text-align: center; border-right: 2px dashed rgba(255, 255, 255, .45); }
+.vt-stub::before, .vt-stub::after { content: ''; position: absolute; right: -10px; z-index: 1; width: 19px; height: 19px; border: 1px solid var(--admin-line); border-radius: 50%; background: var(--admin-cream); }
+.vt-stub::before { top: -11px; }
+.vt-stub::after { bottom: -11px; }
+.vt-stub i { font-size: 23px; }
+.vt-stub strong { font-size: 9px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+
+.vt-body { flex: 1; min-width: 0; padding: 17px 19px; }
+.vt-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.vt-code { font-family: 'Manrope', sans-serif; font-size: 19px; font-weight: 800; letter-spacing: .06em; }
+.vt-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.vt-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 100px; font-size: 9px; font-weight: 800; letter-spacing: .05em; }
+.vt-badge.is-active { color: var(--admin-green); background: #eef8f1; }
+.vt-badge.is-inactive-badge { color: #a34f43; background: #fbeceb; }
+.vt-badge.is-public { color: var(--admin-blue); background: var(--admin-blue-soft); }
+.vt-badge.is-private { color: #5b3a8e; background: #f3eef9; }
+.vt-title { margin-top: 9px; font-size: 14px; font-weight: 700; }
+.vt-desc { margin-top: 2px; color: var(--admin-muted); font-size: 12px; }
+.vt-rules { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 11px; color: var(--admin-muted); font-size: 11px; }
+.vt-rules i { margin-right: 5px; color: var(--admin-brown); }
+.vt-validity { margin-top: 8px; color: var(--admin-muted); font-size: 11px; }
+.vt-validity i { margin-right: 5px; color: var(--admin-brown); }
+
+.vt-stats-row { display: flex; align-items: center; gap: 22px; margin-top: 13px; padding-top: 12px; border-top: 1px dashed var(--admin-line); }
+.vt-stat strong { display: block; font-family: 'Manrope', sans-serif; font-size: 16px; line-height: 1.1; }
+.vt-stat.is-used strong { color: var(--admin-green); }
+.vt-stat span { display: block; margin-top: 3px; color: var(--admin-muted); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.vt-usage-bar { flex: 1; min-width: 110px; }
+.vt-usage-track { height: 7px; overflow: hidden; border-radius: 100px; background: #f0e9e2; }
+.vt-usage-fill { height: 100%; border-radius: 100px; background: linear-gradient(90deg, var(--admin-green), #57b58c); transition: width .3s; }
+.vt-usage-label { margin-top: 5px; color: var(--admin-muted); font-size: 10px; font-weight: 700; }
+
+.vt-actions { display: flex; flex: 0 0 auto; gap: 7px; }
+.vt-grant { margin-top: 12px; padding-top: 11px; border-top: 1px dashed var(--admin-line); }
+.vt-grant summary { display: inline-flex; align-items: center; gap: 6px; color: var(--admin-brown); font-size: 12px; font-weight: 700; cursor: pointer; list-style: none; }
+.vt-grant summary::-webkit-details-marker { display: none; }
+.vt-grant summary:hover { color: var(--admin-brown-dark); }
+.vt-grant summary .fa-chevron-down { font-size: 9px; transition: transform .2s; }
+.vt-grant[open] summary .fa-chevron-down { transform: rotate(180deg); }
+.vt-grant-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 9px; margin-top: 11px; }
+.vt-grant-form label { display: block; font-size: 10px; font-weight: 700; color: var(--admin-muted); }
+.vt-grant-form label input { display: block; margin-top: 4px; }
+.vt-grant-email { flex: 1; min-width: 210px; }
+.vt-grant-days { width: 120px; }
+
+.vouchers-empty { padding: 46px 24px; text-align: center; color: var(--admin-muted); }
+.vouchers-empty i { display: block; margin-bottom: 12px; color: #d8cdc4; font-size: 36px; }
+.vouchers-empty p { margin: 0; font-size: 13px; }
+
+.voucher-alert { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; padding: 13px 16px; border-radius: 10px; font-size: 13px; font-weight: 600; }
+.voucher-alert.is-success { color: var(--admin-green); background: #eef8f1; border: 1px solid #cde8d8; }
+.voucher-alert.is-error { color: #a34f43; background: #fbeceb; border: 1px solid #f0cdc9; }
+
+@media (max-width: 1100px) {
+    .vouchers-layout { grid-template-columns: 1fr; }
+    .voucher-form-card { position: static; }
+    .voucher-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+    .voucher-ticket { flex-direction: column; }
+    .vt-stub { flex: 0 0 auto; flex-direction: row; padding: 12px; border-right: 0; border-bottom: 2px dashed rgba(255, 255, 255, .45); }
+    .vt-stub::before, .vt-stub::after { display: none; }
+    .vt-top { flex-direction: column; }
+    .vt-stats-row { flex-wrap: wrap; gap: 14px; }
+}
+
+/* --------------------------------------------------------------------------
+   Reports: table-level search, filter and sort bars
+   -------------------------------------------------------------------------- */
+.reports-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+    border: 1px solid var(--admin-line);
+    border-radius: 10px;
+    background: #faf8f6;
+}
+.reports-toolbar-left, .reports-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.reports-search {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-width: 230px;
+}
+.reports-search > i {
+    position: absolute;
+    left: 12px;
+    color: var(--admin-muted);
+    font-size: 12px;
+    pointer-events: none;
+}
+.reports-search input {
+    width: 100%;
+    padding: 9px 12px 9px 32px;
+    border: 1.5px solid var(--admin-line);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--admin-ink);
+    font: inherit;
+    font-size: 12px;
+    transition: border-color .15s, box-shadow .15s;
+}
+.reports-search input:focus {
+    outline: none;
+    border-color: var(--admin-brown);
+    box-shadow: 0 0 0 3px rgba(133, 88, 63, .12);
+}
+.reports-sort {
+    padding: 9px 30px 9px 11px;
+    border: 1.5px solid var(--admin-line);
+    border-radius: 8px;
+    background: #fff url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath fill='%2383766e' d='M1 1l5 5 5-5'/%3E%3C/svg%3E") no-repeat right 10px center / 9px 6px;
+    color: var(--admin-ink);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    transition: border-color .15s, box-shadow .15s;
+}
+.reports-sort:focus {
+    outline: none;
+    border-color: var(--admin-brown);
+    box-shadow: 0 0 0 3px rgba(133, 88, 63, .12);
+}
+.reports-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 11px;
+    border: 1px solid var(--admin-line);
+    border-radius: 100px;
+    background: #fff;
+    color: var(--admin-brown);
+    font-size: 11px;
+    font-weight: 700;
+    text-decoration: none;
+    transition: background .15s, border-color .15s;
+}
+.reports-chip:hover { background: #f6f1ec; border-color: #d8cdc4; }
+.reports-chip.is-clear { color: var(--admin-muted); }
+.reports-count {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 9px;
+    border-radius: 100px;
+    background: #f0e9e2;
+    color: var(--admin-muted);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+}
+.reports-empty-row td {
+    padding: 26px 16px !important;
+    text-align: center;
+    color: var(--admin-muted);
+    font-size: 12.5px;
+}
+.reports-empty-row i { display: block; margin-bottom: 7px; color: #d8cdc4; font-size: 22px; }
+
+@media (max-width: 720px) {
+    .reports-toolbar { flex-direction: column; align-items: stretch; }
+    .reports-toolbar-left, .reports-toolbar-right { width: 100%; }
+    .reports-search { min-width: 0; width: 100%; }
+}
+
+/* Anchored report sections keep a gap below the sticky topbar when the
+   browser jumps to #reports-products / -categories / -payments. */
+[data-reports-section] { scroll-margin-top: 24px; }
+@media (max-width: 900px) {
+    [data-reports-section] { scroll-margin-top: 78px; }
+}
+.vt-badge.is-promoted { color: #a4571f; background: #fff4e8; }
+
+/* --------------------------------------------------------------------------
+   Admin Inventory — modernised stock monitor
+   -------------------------------------------------------------------------- */
+.voucher-stat-icon.is-out { color: #a34f43; background: #fbeceb; }
+.inventory-stats-row { margin-bottom: 20px; }
+
+/* Item cell with a thumbnail */
+.inventory-cell { display: flex; align-items: center; gap: 11px; min-width: 210px; }
+.inventory-cell-thumb {
+    display: grid;
+    place-items: center;
+    flex: 0 0 42px;
+    width: 42px;
+    height: 42px;
+    overflow: hidden;
+    border: 1px solid var(--admin-line);
+    border-radius: 10px;
+    background: #faf7f4;
+    color: #c9bdb4;
+    font-size: 15px;
+}
+.inventory-cell-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.inventory-cell-copy { min-width: 0; }
+.inventory-cell-copy strong { display: block; font-size: 13px; line-height: 1.35; }
+.inventory-cell-copy small {
+    display: block;
+    margin-top: 2px;
+    max-width: 260px;
+    overflow: hidden;
+    color: var(--admin-muted);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Stock meter — a quick visual read of the level */
+.admin-inventory-stock-meter {
+    display: block;
+    width: 92px;
+    height: 6px;
+    margin-top: 6px;
+    overflow: hidden;
+    border-radius: 100px;
+    background: #f0e9e2;
+}
+.admin-inventory-stock-fill { display: block; height: 100%; border-radius: 100px; transition: width .3s ease; }
+.admin-inventory-stock-fill.is-good { background: linear-gradient(90deg, #2b8762, #57b58c); }
+.admin-inventory-stock-fill.is-low-stock { background: linear-gradient(90deg, #be762b, #d9a05c); }
+.admin-inventory-stock-fill.is-out-of-stock { background: #c98a84; }
+
+.inventory-stock-cell { min-width: 92px; }
+.inventory-stock-number { font-size: 12px; font-weight: 700; color: var(--admin-ink); }
+
+.admin-inventory-category {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 100px;
+    background: #f4ece6;
+    color: var(--admin-brown);
+    font-size: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.admin-inventory-card .admin-inventory-stock-meter { width: 100%; margin: 0 0 10px; }
+
+@media (max-width: 720px) {
+    .inventory-cell { min-width: 0; }
+    .inventory-cell-copy small { display: none; }
+}
+
+/* --------------------------------------------------------------------------
+   Admin User Management — modernised account list
+   -------------------------------------------------------------------------- */
+.users-stats-row { margin-bottom: 20px; }
+
+/* Avatar with a fallback initial */
+.user-avatar {
+    background: linear-gradient(135deg, #f0e2d6, #faf6f2);
+    color: var(--admin-brown);
+    font-family: 'Manrope', sans-serif;
+    font-size: 15px;
+    font-weight: 800;
+}
+.user-avatar.is-inactive { background: #f1ece9; color: #b3a79f; filter: grayscale(.5); }
+
+.users-table tr.is-inactive-row td { opacity: .72; }
+
+/* Role pills */
+.user-role-badge {
+    display: inline-block;
+    padding: 4px 11px;
+    border-radius: 100px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .04em;
+    white-space: nowrap;
+}
+.user-role-badge.is-admin { color: #8a4b00; background: #fff2e0; }
+.user-role-badge.is-staff { color: #2052a8; background: #e8f0fb; }
+.user-role-badge.is-rider { color: #7a4ea8; background: #f2ebfa; }
+.user-role-badge.is-customer { color: #1f7a4d; background: #e9f7ef; }
+
+/* Status pills — quieter than the old full-width chips */
+.user-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    padding: 4px 11px;
+    border-radius: 100px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .04em;
+    white-space: nowrap;
+}
+.user-status-badge.is-active { color: #1f7a4d; background: #e9f7ef; }
+.user-status-badge.is-active::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #2b8762;
+}
+.user-status-badge.is-inactive { color: #a34f43; background: #fbeceb; }
+.user-status-badge.is-inactive::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #bd5447;
+}
+
+.users-panel .list-footer { margin-top: 18px; }
+
+/* --------------------------------------------------------------------------
+   Admin Dashboard — welcome row, activity timeline, stock alerts
+   -------------------------------------------------------------------------- */
+.dashboard-welcome { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.dashboard-date {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    padding: 7px 13px;
+    border: 1px solid var(--admin-line);
+    border-radius: 100px;
+    background: #fff;
+    color: var(--admin-muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+.dashboard-date i { color: var(--admin-brown); }
+
+/* Stock alerts double as deep links into the filtered inventory view */
+a.inventory-stat {
+    text-decoration: none;
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+a.inventory-stat:hover { transform: translateY(-1px); border-color: #d8cdc4; }
+a.inventory-stat span:first-child {
+    overflow: hidden;
+    color: var(--admin-ink);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Activity timeline */
+.activity-timeline { list-style: none; margin: 0; padding: 0; }
+.activity-row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 13px;
+    padding: 13px 0;
+    border-bottom: 1px dashed var(--admin-line);
+}
+.activity-row:last-child { border-bottom: none; padding-bottom: 0; }
+.activity-row:first-child { padding-top: 0; }
+
+.activity-dot {
+    display: grid;
+    place-items: center;
+    flex: 0 0 32px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    font-size: 12px;
+}
+.activity-dot.is-good { color: #1f7a4d; background: #e9f7ef; }
+.activity-dot.is-info { color: #2052a8; background: #e8f0fb; }
+.activity-dot.is-warn { color: #8a4b00; background: #fff2e0; }
+.activity-dot.is-bad  { color: #a34f43; background: #fbeceb; }
+
+.activity-body { flex: 1; min-width: 0; }
+.activity-body strong { display: block; font-size: 13px; color: var(--admin-ink); }
+.activity-body p {
+    margin: 3px 0 0;
+    color: var(--admin-muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+.activity-meta { flex: 0 0 auto; text-align: right; }
+.activity-meta span { display: block; font-size: 12px; font-weight: 700; color: var(--admin-ink); }
+.activity-meta small { display: block; margin-top: 2px; color: var(--admin-muted); font-size: 11px; }
+
+@media (max-width: 700px) {
+    .activity-row { flex-wrap: wrap; }
+    .activity-meta { width: 100%; padding-left: 45px; text-align: left; }
+}
+
+/* The action menu is absolutely positioned against the actions cell, so the
+   cell itself must be the positioning context. */
+.users-table td:last-child { position: relative; }
