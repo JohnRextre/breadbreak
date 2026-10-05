@@ -36,6 +36,16 @@ $navItems = [
 $showCartPages = ['menu.php', 'shop.php', 'menu_dashboard.php', 'cart.php', 'checkout.php', 'order-confirmation.php', 'order-status.php'];
 $showCartIcon = in_array($currentPage, $showCartPages, true);
 $isOrderStatusPage = $currentPage === 'order-status.php';
+if ($isCustomerHeader) {
+    // Customer navigation: Menu is the customer dashboard itself (no public Home).
+    $navItems = [
+        ['label' => 'Menu', 'href' => '/BreadBreak/customer/menu_dashboard.php', 'page' => 'menu_dashboard.php'],
+        ['label' => 'Moments', 'href' => '/BreadBreak/moments.php', 'page' => 'moments.php'],
+        ['label' => 'My Orders', 'href' => '/BreadBreak/customer/order-status.php', 'page' => 'order-status.php'],
+        ['label' => 'Contact', 'href' => '/BreadBreak/contact.php', 'page' => 'contact.php'],
+        ['label' => 'Messages', 'href' => '/BreadBreak/customer/messages.php', 'page' => 'messages.php'],
+    ];
+}
 ?>
 
 <!DOCTYPE html>
@@ -68,25 +78,14 @@ $isOrderStatusPage = $currentPage === 'order-status.php';
                 </a>
             </div>
 
-            <?php if (!$isCustomerHeader): ?><nav class="main-nav" aria-label="Main navigation">
+            <nav class="main-nav" aria-label="Main navigation">
                 <?php foreach ($navItems as $item): ?>
                     <a href="<?php echo $item['href']; ?>" class="nav-link<?php echo $currentPage === $item['page'] ? ' active' : ''; ?>"><?php echo $item['label']; ?></a>
                 <?php endforeach; ?>
-            </nav><?php endif; ?>
+            </nav>
 
             <div class="header-tools">
                 <?php if ($isCustomerHeader): ?>
-                <a href="/BreadBreak/moments.php" class="customer-header-icon has-label<?php echo $currentPage === 'moments.php' ? ' is-active' : ''; ?>" aria-label="BreadMoments" title="BreadMoments">
-                    <i class="fa-solid fa-camera-retro"></i>
-                    <span class="customer-header-icon-label">Moments</span>
-                </a>
-                <a href="/BreadBreak/customer/order-status.php" class="customer-header-icon has-label<?php echo $isOrderStatusPage ? ' is-active' : ''; ?>" aria-label="My Orders" title="My Orders">
-                    <i class="fa-solid fa-receipt"></i>
-                    <span class="customer-header-icon-label">My Orders</span>
-                    <?php if ($headerActiveOrders > 0): ?>
-                        <span class="cart-count"><?php echo $headerActiveOrders > 9 ? '9+' : $headerActiveOrders; ?></span>
-                    <?php endif; ?>
-                </a>
                 <a href="/BreadBreak/customer/account.php" class="customer-profile-button" aria-label="Open My Account" title="My Account"><?php if ($customerProfileImage): ?><img src="<?php echo htmlspecialchars($customerProfileImage); ?>" alt="Profile photo" /><?php else: ?><span aria-hidden="true"><?php echo htmlspecialchars($customerInitial); ?></span><?php endif; ?></a>
                 <?php endif; ?>
                 <?php if ($showCartIcon): ?>

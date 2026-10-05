@@ -94,62 +94,66 @@ $pageTitle = 'Dashboard';
 $activePage = 'dashboard';
 require __DIR__ . '/../includes/staff_header.php';
 ?>
-<section class="access-card" aria-label="Staff operations intro">
-    <div class="access-icon"><i class="fa-solid fa-boxes-stacked"></i></div>
+<div class="staff-dash">
+<!-- ── Hero ── -->
+<section class="welcome-block dashboard-welcome staff-hero">
     <div>
-        <h2>Bakery Inventory Operations</h2>
+        <span class="staff-dash-kicker"><i class="fa-solid fa-boxes-stacked"></i> Bakery Inventory Operations</span>
+        <h2>Welcome back, <?php echo htmlspecialchars($_SESSION['first_name'] ?? 'Staff'); ?>!</h2>
         <p>Monitor real-time bakery stock levels, track low stock warnings, and organize menu categories.</p>
     </div>
-</section>
-
-<section class="welcome-block">
-    <h2>Welcome back, <?php echo htmlspecialchars($_SESSION['first_name'] ?? 'Staff'); ?>!</h2>
-    <p>Here is your bakery stock summary for today.</p>
+    <span class="dashboard-date"><i class="fa-regular fa-calendar"></i> <?php echo date('M j, Y'); ?></span>
 </section>
 
 <!-- Summary Metric Cards -->
 <section class="summary-grid staff-summary-grid" aria-label="Inventory metrics">
-    <article class="summary-card">
+    <article class="summary-card staff-stat is-brown">
         <div class="summary-top">
-            <span>TOTAL BAKERY ITEMS</span>
+            <span>Total Bakery Items</span>
             <span class="summary-icon"><i class="fa-solid fa-bread-slice"></i></span>
         </div>
         <div class="summary-value"><?php echo $totalProducts; ?></div>
+        <small class="staff-stat-note">Across <?php echo $totalCategories; ?> menu categories</small>
     </article>
-    <article class="summary-card">
+    <article class="summary-card staff-stat is-blue">
         <div class="summary-top">
-            <span>TOTAL STOCK UNITS</span>
+            <span>Total Stock Units</span>
             <span class="summary-icon"><i class="fa-solid fa-cubes-stacked"></i></span>
         </div>
         <div class="summary-value"><?php echo number_format($totalStockUnits); ?></div>
+        <small class="staff-stat-note">Units currently on hand</small>
     </article>
-    <article class="summary-card">
+    <article class="summary-card staff-stat is-green">
         <div class="summary-top">
-            <span>IN STOCK (GOOD)</span>
-            <span class="summary-icon" style="color: var(--admin-green);"><i class="fa-solid fa-circle-check"></i></span>
+            <span>In Stock (Good)</span>
+            <span class="summary-icon"><i class="fa-solid fa-circle-check"></i></span>
         </div>
-        <div class="summary-value" style="color: var(--admin-green);"><?php echo $inStock; ?></div>
+        <div class="summary-value"><?php echo $inStock; ?></div>
+        <small class="staff-stat-note">Items holding more than 10 units</small>
     </article>
-    <article class="summary-card">
+    <article class="summary-card staff-stat is-orange">
         <div class="summary-top">
-            <span>LOW STOCK (&le;10)</span>
-            <span class="summary-icon" style="color: var(--admin-orange);"><i class="fa-solid fa-triangle-exclamation"></i></span>
+            <span>Low Stock (&le;10)</span>
+            <span class="summary-icon"><i class="fa-solid fa-triangle-exclamation"></i></span>
         </div>
-        <div class="summary-value" style="color: var(--admin-orange);"><?php echo $lowStock; ?></div>
+        <div class="summary-value"><?php echo $lowStock; ?></div>
+        <small class="staff-stat-note">Needs restocking soon</small>
     </article>
-    <article class="summary-card">
+    <article class="summary-card staff-stat is-red">
         <div class="summary-top">
-            <span>OUT OF STOCK</span>
-            <span class="summary-icon" style="color: #a34f43;"><i class="fa-solid fa-circle-xmark"></i></span>
+            <span>Out of Stock</span>
+            <span class="summary-icon"><i class="fa-solid fa-circle-xmark"></i></span>
         </div>
-        <div class="summary-value" style="color: #a34f43;"><?php echo $outOfStock; ?></div>
+        <div class="summary-value"><?php echo $outOfStock; ?></div>
+        <small class="staff-stat-note">No units left on the shelf</small>
     </article>
-    <article class="summary-card">
+    <article class="summary-card staff-stat is-accent">
         <div class="summary-top">
-            <span>MENU CATEGORIES</span>
+            <span>Menu Categories</span>
             <span class="summary-icon"><i class="fa-solid fa-layer-group"></i></span>
         </div>
         <div class="summary-value"><?php echo $totalCategories; ?></div>
+        <small class="staff-stat-note">Groups used to sort the menu</small>
     </article>
 </section>
 
@@ -162,15 +166,14 @@ require __DIR__ . '/../includes/staff_header.php';
                 <h3>Stock Alerts</h3>
                 <p class="panel-subtitle">Items that require restocking (10 or fewer units).</p>
             </div>
-            <a href="<?php echo BASE_URL; ?>/staff/inventory.php" class="text-link">Open Inventory</a>
+            <a href="<?php echo BASE_URL; ?>/staff/inventory.php" class="text-link">Open Inventory <i class="fa-solid fa-arrow-right"></i></a>
         </div>
         <?php if ($inventoryAlerts): ?>
             <div class="table-wrap">
-                <table class="admin-table">
+                <table class="admin-table dash-table dash-table-alerts">
                     <thead>
                         <tr>
-                            <th>Item Name</th>
-                            <th>Category</th>
+                            <th>Item</th>
                             <th>Current Stock</th>
                             <th>Status</th>
                             <th>Action</th>
@@ -184,11 +187,13 @@ require __DIR__ . '/../includes/staff_header.php';
                             $statusClass = $isOut ? 'stock-out' : 'stock-low';
                         ?>
                             <tr>
-                                <td><strong><?php echo htmlspecialchars($alert['name']); ?></strong></td>
-                                <td><?php echo htmlspecialchars($alert['category_name']); ?></td>
+                                <td>
+                                    <strong class="dash-item-name"><?php echo htmlspecialchars($alert['name']); ?></strong>
+                                    <small class="dash-item-sub"><?php echo htmlspecialchars($alert['category_name']); ?></small>
+                                </td>
                                 <td><strong><?php echo $qty; ?></strong> units</td>
                                 <td><span class="stock-badge <?php echo $statusClass; ?>"><?php echo $statusLabel; ?></span></td>
-                                <td><a href="<?php echo BASE_URL; ?>/staff/inventory.php?search=<?php echo urlencode($alert['name']); ?>" class="admin-button secondary" style="padding: 4px 8px; font-size: 11px;">Restock</a></td>
+                                <td class="dash-row-action"><a href="<?php echo BASE_URL; ?>/staff/inventory.php?search=<?php echo urlencode($alert['name']); ?>" class="admin-button secondary">Restock</a></td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -210,7 +215,7 @@ require __DIR__ . '/../includes/staff_header.php';
                 <h3>Stock by Category</h3>
                 <p class="panel-subtitle">Available units across menu categories.</p>
             </div>
-            <a href="<?php echo BASE_URL; ?>/staff/reports.php" class="text-link">Full Report</a>
+            <a href="<?php echo BASE_URL; ?>/staff/reports.php" class="text-link">Full Report <i class="fa-solid fa-arrow-right"></i></a>
         </div>
         <div class="category-stock-list">
             <?php 
@@ -220,37 +225,34 @@ require __DIR__ . '/../includes/staff_header.php';
                 $itemsCount = (int) $cat['item_count'];
                 $percent = min(100, round(($units / $maxCategoryStock) * 100));
             ?>
-                <div class="category-stock-item" style="margin-bottom: 12px;">
-                    <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
-                        <span style="font-weight: 700; color: var(--admin-brown-dark);"><?php echo htmlspecialchars($cat['name']); ?></span>
-                        <span><strong><?php echo number_format($units); ?></strong> units <small style="color: var(--admin-muted);">(<?php echo $itemsCount; ?> <?php echo $itemsCount === 1 ? 'item' : 'items'; ?>)</small></span>
+                <div class="category-stock-item">
+                    <div class="category-stock-head">
+                        <span class="category-stock-name"><?php echo htmlspecialchars($cat['name']); ?></span>
+                        <span class="category-stock-count"><strong><?php echo number_format($units); ?></strong> units <small>(<?php echo $itemsCount; ?> <?php echo $itemsCount === 1 ? 'item' : 'items'; ?>)</small></span>
                     </div>
-                    <div style="height: 7px; background: #f0ece8; border-radius: 4px; overflow: hidden;">
-                        <div style="height: 100%; width: <?php echo $percent; ?>%; background: var(--admin-brown); border-radius: 4px;"></div>
-                    </div>
+                    <div class="category-stock-track"><span style="width: <?php echo $percent; ?>%;"></span></div>
                 </div>
             <?php endforeach; ?>
         </div>
     </article>
 </section>
 
-<!-- Recently Added Items & Quick Access -->
-<section class="dashboard-grid staff-dashboard-grid" style="margin-top: 18px;">
+<!-- Recently Added Products -->
+<section class="dashboard-grid staff-dashboard-grid is-single">
     <article class="panel">
         <div class="panel-heading">
             <div>
                 <h3>Recently Added Products</h3>
                 <p class="panel-subtitle">Newest additions to the bakery inventory.</p>
             </div>
-            <a href="<?php echo BASE_URL; ?>/staff/inventory.php" class="text-link">View All</a>
+            <a href="<?php echo BASE_URL; ?>/staff/inventory.php" class="text-link">View All <i class="fa-solid fa-arrow-right"></i></a>
         </div>
         <?php if ($recentItems): ?>
             <div class="table-wrap">
-                <table class="admin-table">
+                <table class="admin-table dash-table dash-table-recent">
                     <thead>
                         <tr>
                             <th>Item</th>
-                            <th>Category</th>
                             <th>Price Range</th>
                             <th>Total Stock</th>
                         </tr>
@@ -258,8 +260,10 @@ require __DIR__ . '/../includes/staff_header.php';
                     <tbody>
                         <?php foreach ($recentItems as $item): ?>
                             <tr>
-                                <td><strong><?php echo htmlspecialchars($item['name']); ?></strong></td>
-                                <td><?php echo htmlspecialchars($item['category_name']); ?></td>
+                                <td>
+                                    <strong class="dash-item-name"><?php echo htmlspecialchars($item['name']); ?></strong>
+                                    <small class="dash-item-sub"><?php echo htmlspecialchars($item['category_name']); ?></small>
+                                </td>
                                 <td>
                                     ₱<?php echo number_format((float) $item['min_price'], 2); ?>
                                     <?php if ((float) $item['min_price'] !== (float) $item['max_price']): ?>
@@ -276,26 +280,7 @@ require __DIR__ . '/../includes/staff_header.php';
             <p class="empty-state">No inventory items recorded yet.</p>
         <?php endif; ?>
     </article>
-
-    <article class="panel quick-access">
-        <div class="panel-heading">
-            <h3>Quick Actions</h3>
-        </div>
-        <div class="quick-links">
-            <a class="quick-link" href="<?php echo BASE_URL; ?>/staff/inventory.php">
-                <i class="fa-solid fa-boxes-stacked"></i> Manage Inventory
-            </a>
-            <a class="quick-link" href="<?php echo BASE_URL; ?>/staff/inventory.php">
-                <i class="fa-solid fa-plus-circle"></i> Add New Product
-            </a>
-            <a class="quick-link" href="<?php echo BASE_URL; ?>/staff/reports.php">
-                <i class="fa-solid fa-chart-pie"></i> Inventory Reports
-            </a>
-            <a class="quick-link" href="<?php echo BASE_URL; ?>/staff/profile.php">
-                <i class="fa-solid fa-circle-user"></i> My Profile
-            </a>
-        </div>
-    </article>
 </section>
+</div>
 
 <?php require __DIR__ . '/../includes/staff_footer.php'; ?>

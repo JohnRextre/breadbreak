@@ -220,10 +220,19 @@ $noticeIsError = str_starts_with($notice, 'Error:');
 
 require __DIR__ . '/../includes/staff_header.php';
 ?>
-<section class="page-intro">
+<div class="staff-promos">
+<!-- ── Hero ── -->
+<section class="welcome-block dashboard-welcome staff-hero">
     <div>
-        <h2>BreadMoments promotions</h2>
+        <span class="staff-dash-kicker"><i class="fa-solid fa-bullhorn"></i> BreadMoments · Store Promotions</span>
+        <h2>Promote your bakery products</h2>
         <p>Pick a product, add a photo — the admin reviews every promotion before it appears in BreadMoments.</p>
+    </div>
+    <div class="hero-chips">
+        <span class="dashboard-date"><i class="fa-solid fa-shield-halved"></i> Admin review first</span>
+        <a class="dashboard-date dashboard-date-link" href="<?php echo BASE_URL; ?>/staff/promotions.php">
+            <i class="fa-solid fa-shop"></i> Shop Promotions (<?php echo count($myPromos); ?>) <i class="fa-solid fa-arrow-right"></i>
+        </a>
     </div>
 </section>
 
@@ -234,21 +243,48 @@ require __DIR__ . '/../includes/staff_header.php';
 </div>
 <?php endif; ?>
 
-<ul class="mod-steps">
-    <li><i class="fa-solid fa-paper-plane"></i> <span>You submit</span></li>
-    <li><i class="fa-solid fa-magnifying-glass"></i> <span>Admin reviews</span></li>
-    <li><i class="fa-solid fa-circle-check"></i> <span>Approved → goes live as a store promotion</span></li>
-    <li><i class="fa-solid fa-rotate-left"></i> <span>Rejected → revise using the admin's note → resubmit</span></li>
-</ul>
+<!-- ── How it works ── -->
+<section class="panel moments-panel">
+    <div class="panel-heading moments-heading">
+        <div class="moments-heading-copy">
+            <span class="moments-heading-icon"><i class="fa-solid fa-route"></i></span>
+            <div>
+                <h3>How it works</h3>
+                <p class="panel-subtitle">Four simple steps, from draft to live post.</p>
+            </div>
+        </div>
+    </div>
+    <ol class="moments-steps">
+        <li class="is-brown">
+            <span class="moments-step-index">1</span>
+            <span class="moments-step-copy"><strong>You submit</strong><small>Pick a product, add a photo and write a caption.</small></span>
+        </li>
+        <li class="is-blue">
+            <span class="moments-step-index">2</span>
+            <span class="moments-step-copy"><strong>Admin reviews</strong><small>Every promotion is checked before it goes live.</small></span>
+        </li>
+        <li class="is-green">
+            <span class="moments-step-index">3</span>
+            <span class="moments-step-copy"><strong>Approved &rarr; live</strong><small>Shown in BreadMoments as a store promotion.</small></span>
+        </li>
+        <li class="is-red">
+            <span class="moments-step-index">4</span>
+            <span class="moments-step-copy"><strong>Rejected &rarr; revise</strong><small>Use the admin&rsquo;s note, then send it back.</small></span>
+        </li>
+    </ol>
+</section>
 
-<section class="panel mod-panel">
-    <div class="panel-heading">
-        <div>
-            <h3><?php echo $isResubmit ? 'Revise your promotion' : 'New store promotion'; ?></h3>
-            <p class="panel-subtitle"><?php echo $isResubmit ? 'Fix it based on the note, then send it back for review.' : 'It will be sent to the admin for review first.'; ?></p>
+<section class="panel moments-panel">
+    <div class="panel-heading moments-heading">
+        <div class="moments-heading-copy">
+            <span class="moments-heading-icon"><i class="fa-solid fa-pen-to-square"></i></span>
+            <div>
+                <h3><?php echo $isResubmit ? 'Revise your promotion' : 'New store promotion'; ?></h3>
+                <p class="panel-subtitle"><?php echo $isResubmit ? 'Fix it based on the note, then send it back for review.' : 'It will be sent to the admin for review first.'; ?></p>
+            </div>
         </div>
         <?php if ($isResubmit): ?>
-        <a class="admin-button secondary" href="<?php echo BASE_URL; ?>/staff/moments.php"><i class="fa-solid fa-xmark"></i> Cancel</a>
+        <a class="admin-button secondary moments-pill" href="<?php echo BASE_URL; ?>/staff/moments.php"><i class="fa-solid fa-xmark"></i> Cancel</a>
         <?php endif; ?>
     </div>
 
@@ -273,26 +309,38 @@ require __DIR__ . '/../includes/staff_header.php';
                     </option>
                     <?php endforeach; ?>
                 </select>
+                <small class="mod-hint">Only products currently on the menu are listed.</small>
                 <?php if (isset($errors['product_id'])): ?><small class="field-error"><?php echo htmlspecialchars($errors['product_id']); ?></small><?php endif; ?>
             </div>
 
-            <div class="form-field">
+            <div class="photo-field promo-photo-field" data-promo-upload>
                 <label for="promo-photo">Promo photo</label>
-                <input id="promo-photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" <?php echo $isResubmit ? '' : 'required'; ?> />
-                <small class="mod-hint">JPG / PNG / WEBP, up to 8MB. <?php echo $isResubmit ? 'Leave it empty to keep the current photo.' : ''; ?></small>
+                <label class="photo-drop promo-drop" for="promo-photo">
+                    <img class="promo-drop-preview" data-promo-photo-preview alt="" hidden />
+                    <span class="promo-drop-copy" data-promo-photo-copy>
+                        <strong>Click to choose a photo</strong>
+                        <small>JPG / PNG / WEBP, up to 8MB</small>
+                    </span>
+                    <span class="photo-filename" data-promo-photo-name>No photo selected</span>
+                </label>
+                <input id="promo-photo" class="sr-only" name="photo" type="file" accept="image/jpeg,image/png,image/webp" data-promo-photo-input <?php echo $isResubmit ? '' : 'required'; ?> />
+                <div class="promo-photo-actions" hidden data-promo-photo-meta>
+                    <button class="promo-photo-remove" type="button" data-promo-photo-remove><i class="fa-solid fa-xmark"></i> Remove photo</button>
+                </div>
+                <?php if ($isResubmit): ?><small class="mod-hint">Leave it empty to keep the current photo.</small><?php endif; ?>
                 <?php if (isset($errors['photo'])): ?><small class="field-error"><?php echo htmlspecialchars($errors['photo']); ?></small><?php endif; ?>
             </div>
         </div>
 
-        <div class="form-field">
-            <label for="promo-title">Title</label>
+        <div class="form-field promo-field">
+            <label for="promo-title">Title <span class="promo-count" data-promo-count="promo-title">0/140</span></label>
             <input id="promo-title" name="title" type="text" maxlength="140" required placeholder="Halimbawa: Fresh Pandesal — Bagong luto tuwing umaga!" value="<?php echo htmlspecialchars($old['title']); ?>" />
             <?php if (isset($errors['title'])): ?><small class="field-error"><?php echo htmlspecialchars($errors['title']); ?></small><?php endif; ?>
         </div>
 
-        <div class="form-field">
-            <label for="promo-body">Caption</label>
-            <textarea id="promo-body" name="body" required placeholder="Ano ang espesyal sa produktong ito? Presyo, oras, promo…"><?php echo htmlspecialchars($old['body']); ?></textarea>
+        <div class="form-field promo-field">
+            <label for="promo-body">Caption <span class="promo-count" data-promo-count="promo-body">0/2000</span></label>
+            <textarea id="promo-body" name="body" required maxlength="2000" placeholder="Ano ang espesyal sa produktong ito? Presyo, oras, promo…"><?php echo htmlspecialchars($old['body']); ?></textarea>
             <?php if (isset($errors['body'])): ?><small class="field-error"><?php echo htmlspecialchars($errors['body']); ?></small><?php endif; ?>
         </div>
 
@@ -304,61 +352,6 @@ require __DIR__ . '/../includes/staff_header.php';
     </form>
 </section>
 
-<section class="panel mod-panel">
-    <div class="panel-heading">
-        <div>
-            <h3>My promotions</h3>
-            <p class="panel-subtitle">Everything you submitted, with the current review status.</p>
-        </div>
-    </div>
-
-    <?php if (!$myPromos): ?>
-        <p class="empty-state">You have not submitted a promotion yet — use the form above to create your first one.</p>
-    <?php else: ?>
-        <?php foreach ($myPromos as $row): ?>
-        <article class="mod-card">
-            <span class="mod-thumb">
-                <?php if ($row['photo_id']): ?>
-                <img src="/BreadBreak/api/moment-image.php?id=<?php echo (int) $row['photo_id']; ?>" alt="" loading="lazy" />
-                <?php else: ?>
-                <i class="fa-solid fa-bullhorn" aria-hidden="true"></i>
-                <?php endif; ?>
-            </span>
-            <div class="mod-body">
-                <div class="mod-head">
-                    <strong class="mod-title"><?php echo htmlspecialchars($row['title']); ?></strong>
-                    <span class="mod-status promo">Promotion</span>
-                    <?php [$pillLabel, $pillClass] = momentStatusLabel((string) $row['moderation_status']); ?>
-                    <span class="mod-status <?php echo $pillClass; ?>"><?php echo $pillLabel; ?></span>
-                </div>
-                <p class="mod-meta">
-                    <?php if (!empty($row['product_name'])): ?>
-                    <i class="fa-solid fa-bread-slice"></i> <?php echo htmlspecialchars($row['product_name']); ?> ·
-                    <?php endif; ?>
-                    <i class="fa-solid fa-clock"></i> submitted <?php echo htmlspecialchars(momentTimeAgo($row['created_at'])); ?>
-                </p>
-                <?php if (!empty($row['moderation_reason'])): ?>
-                <p class="mod-feedback <?php echo $row['moderation_status'] === 'pending' ? 'is-old' : ''; ?>">
-                    <i class="fa-solid fa-message"></i>
-                    <?php echo $row['moderation_status'] === 'pending' ? 'Your previous note from the admin:' : 'Admin’s message:'; ?>
-                    <?php echo htmlspecialchars($row['moderation_reason']); ?>
-                </p>
-                <?php endif; ?>
-            </div>
-            <div class="mod-actions">
-                <?php if ($row['moderation_status'] === 'visible'): ?>
-                <a class="admin-button secondary" href="<?php echo BASE_URL; ?>/moment.php?id=<?php echo (int) $row['id']; ?>">
-                    <i class="fa-solid fa-arrow-up-right-from-square"></i> View live post
-                </a>
-                <?php else: ?>
-                <a class="admin-button primary" href="<?php echo BASE_URL; ?>/staff/moments.php?edit=<?php echo (int) $row['id']; ?>">
-                    <i class="fa-solid fa-pen"></i> Edit &amp; resubmit
-                </a>
-                <?php endif; ?>
-            </div>
-        </article>
-        <?php endforeach; ?>
-    <?php endif; ?>
-</section>
+</div>
 
 <?php require __DIR__ . '/../includes/staff_footer.php'; ?>

@@ -67,6 +67,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $order['status'] === 'completed') {
         exit;
     }
 
+    if ($action === 'delete_media') {
+        // Removing an attachment that was already uploaded — called over fetch()
+        // from the "Add photos and video" tiles, so answer in JSON.
+        $mediaId = (int) ($_POST['media_id'] ?? 0);
+        $removed = false;
+
+        if ($mediaId > 0) {
+            // Scoped to this order and this customer, so a guessed id cannot
+            // touch somebody else's review.
+            $deleteStmt = $pdo->prepare(
+                'DELETE m FROM order_review_media m
+                 JOIN order_reviews r ON r.id = m.review_id
+                 WHERE m.id = :mid AND r.order_id = :oid AND r.customer_id = :cid'
+            );
+            $removed = $deleteStmt->execute(['mid' => $mediaId, 'oid' => $orderId, 'cid' => $customerId])
+                && $deleteStmt->rowCount() > 0;
+        }
+
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => $removed]);
+        exit;
+    }
+
     if ($action === 'save_review') {
         $food = reviewStarValue($_POST['food_rating'] ?? null);
 
@@ -353,14 +376,34 @@ require __DIR__ . '/../includes/header.php';
                     <p class="rr-hint">Photos and a short video help other customers decide. Up to 4 photos, or 1 video.</p>
 
                     <?php if ($savedMedia): ?>
-                        <ul class="rr-media-list">
+                        <ul class="rr-media-list" data-rr-saved>
                             <?php foreach ($savedMedia as $media): ?>
-                                <li>
-                                    <span class="rr-media-tag <?php echo $media['media_kind'] === 'video' ? 'is-video' : ''; ?>">
-                                        <i class="fa-solid <?php echo $media['media_kind'] === 'video' ? 'fa-video' : 'fa-image'; ?>"></i>
-                                        <?php echo $media['media_kind'] === 'video' ? 'Video' : 'Photo'; ?>
-                                    </span>
-                                    <small><?php echo htmlspecialchars((string) ($media['media_name'] ?: 'attachment')); ?></small>
+                                <?php
+                                    $mediaId = (int) $media['id'];
+                                    $isVideo = $media['media_kind'] === 'video';
+                                    $mediaSrc = BASE_URL . '/api/review-media.php?id=' . $mediaId;
+                                    $mediaName = (string) ($media['media_name'] ?: ($isVideo ? 'video' : 'photo'));
+                                ?>
+                                <li class="rr-tile" data-saved-media="<?php echo $mediaId; ?>">
+                                    <button
+                                        type="button"
+                                        class="rr-tile-open"
+                                        data-open-src="<?php echo htmlspecialchars($mediaSrc); ?>"
+                                        data-open-kind="<?php echo $isVideo ? 'video' : 'image'; ?>"
+                                        data-open-name="<?php echo htmlspecialchars($mediaName); ?>"
+                                        aria-label="View <?php echo htmlspecialchars($mediaName); ?>"
+                                    >
+                                        <?php if ($isVideo): ?>
+                                            <span class="rr-tile-video"><i class="fa-solid fa-play"></i></span>
+                                        <?php else: ?>
+                                            <img src="<?php echo htmlspecialchars($mediaSrc); ?>" alt="" loading="lazy" />
+                                        <?php endif; ?>
+                                        <span class="rr-tile-tag<?php echo $isVideo ? ' is-video' : ''; ?>"><?php echo $isVideo ? 'Video' : 'Photo'; ?></span>
+                                    </button>
+                                    <button type="button" class="rr-tile-remove" data-remove-saved aria-label="Remove <?php echo htmlspecialchars($mediaName); ?>">
+                                        <i class="fa-solid fa-xmark"></i>
+                                    </button>
+                                    <small class="rr-tile-name"><?php echo htmlspecialchars($mediaName); ?></small>
                                 </li>
                             <?php endforeach; ?>
                         </ul>
@@ -372,7 +415,14 @@ require __DIR__ . '/../includes/header.php';
                         <small>JPG, PNG, WEBP · MP4, WEBM</small>
                         <input type="file" name="review_media[]" multiple accept="image/jpeg,image/png,image/webp,video/mp4,video/webm" data-rr-input />
                     </label>
-                    <ul class="rr-file-list" data-rr-files></ul>
+                    <ul
+                        class="rr-file-list"
+                        data-rr-files
+                        data-max-photos="<?php echo (int) $limits['max_media']; ?>"
+                        data-max-videos="1"
+                        data-max-image-bytes="<?php echo (int) $limits['max_image_bytes']; ?>"
+                        data-max-video-bytes="<?php echo (int) $limits['max_video_bytes']; ?>"
+                    ></ul>
                 </div>
 
                 <div class="rr-block">
@@ -475,6 +525,18 @@ require __DIR__ . '/../includes/header.php';
     </div>
 </div>
 
+<?php /* ── Attachment viewer ─────────────────────────────────────────────── */ ?>
+<div class="rr-viewer" id="rr-viewer" hidden role="dialog" aria-modal="true" aria-label="Attachment preview">
+    <div class="rr-viewer-backdrop" data-viewer-close></div>
+    <div class="rr-viewer-card">
+        <button class="rr-viewer-close" type="button" data-viewer-close aria-label="Close preview">
+            <i class="fa-solid fa-xmark"></i>
+        </button>
+        <div class="rr-viewer-stage" data-viewer-stage></div>
+        <p class="rr-viewer-caption" data-viewer-caption></p>
+    </div>
+</div>
+
 <script>
 (function () {
     // Star rows: highlight up to the hovered/checked star and show the caption.
@@ -527,19 +589,285 @@ require __DIR__ . '/../includes/header.php';
         });
     }
 
-    // Show chosen files before upload.
+    // ── Attachments ──────────────────────────────────────────────────────
+    // Chosen files get a tappable thumbnail: click it to watch/read it, hit the
+    // X to drop it from the selection. Uploads already on the server work the
+    // same way, except the X also deletes the row (delete_media action).
     var input = document.querySelector('[data-rr-input]');
     var list = document.querySelector('[data-rr-files]');
-    if (input && list) {
-        input.addEventListener('change', function () {
-            list.innerHTML = '';
-            Array.prototype.forEach.call(input.files || [], function (file) {
-                var li = document.createElement('li');
-                li.textContent = file.name + ' · ' + (file.size / 1048576).toFixed(1) + ' MB';
-                list.appendChild(li);
-            });
+    var refInput = document.querySelector('form.rr-form input[name="ref"]');
+    var canStage = typeof DataTransfer !== 'undefined';
+    var limits = {
+        photos: Number(list && list.getAttribute('data-max-photos')) || 4,
+        videos: Number(list && list.getAttribute('data-max-videos')) || 1,
+        imageBytes: Number(list && list.getAttribute('data-max-image-bytes')) || 8388608,
+        videoBytes: Number(list && list.getAttribute('data-max-video-bytes')) || 26214400
+    };
+    var staged = [];      // File[] still waiting to be submitted
+    var stagedUrls = [];  // object URL, index-matched with `staged`
+    var imageTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    var videoTypes = ['video/mp4', 'video/webm'];
+
+    function fileKey(file) {
+        return file.name + '|' + file.size + '|' + file.lastModified;
+    }
+    function isVideoFile(file) {
+        return videoTypes.indexOf(file.type) > -1;
+    }
+
+    // Push the staged files back into the input so the real submit picks them up.
+    function syncInput() {
+        if (!input || !canStage) return;
+        var transfer = new DataTransfer();
+        staged.forEach(function (file) { transfer.items.add(file); });
+        input.files = transfer.files;
+    }
+
+    function buildTile(options) {
+        var li = document.createElement('li');
+        li.className = 'rr-tile';
+        li.setAttribute('data-index', String(options.index));
+
+        var open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'rr-tile-open';
+        open.setAttribute('data-open-src', options.src);
+        open.setAttribute('data-open-kind', options.kind);
+        open.setAttribute('data-open-name', options.name);
+        open.setAttribute('aria-label', 'View ' + options.name);
+
+        if (options.kind === 'video') {
+            var play = document.createElement('span');
+            play.className = 'rr-tile-video';
+            play.innerHTML = '<i class="fa-solid fa-play"></i>';
+            open.appendChild(play);
+        } else {
+            var img = document.createElement('img');
+            img.src = options.src;
+            img.alt = '';
+            open.appendChild(img);
+        }
+
+        var tag = document.createElement('span');
+        tag.className = 'rr-tile-tag' + (options.kind === 'video' ? ' is-video' : '');
+        tag.textContent = options.kind === 'video' ? 'Video' : 'Photo';
+        open.appendChild(tag);
+
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'rr-tile-remove';
+        remove.setAttribute('data-remove-pending', '');
+        remove.setAttribute('aria-label', 'Remove ' + options.name);
+        remove.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+        if (!canStage) remove.hidden = true;   // cannot edit the native selection
+
+        var name = document.createElement('small');
+        name.className = 'rr-tile-name';
+        name.textContent = options.caption;
+
+        li.appendChild(open);
+        li.appendChild(remove);
+        li.appendChild(name);
+        return li;
+    }
+
+    function renderFiles(warnings) {
+        if (!list) return;
+        list.innerHTML = '';
+
+        (warnings || []).forEach(function (message) {
+            var warn = document.createElement('li');
+            warn.className = 'rr-file-warning';
+            warn.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i><span></span>';
+            warn.querySelector('span').textContent = message;
+            list.appendChild(warn);
+        });
+
+        staged.forEach(function (file, index) {
+            list.appendChild(buildTile({
+                index: index,
+                src: stagedUrls[index],
+                kind: isVideoFile(file) ? 'video' : 'image',
+                name: file.name,
+                caption: file.name + ' · ' + (file.size / 1048576).toFixed(1) + ' MB'
+            }));
         });
     }
+
+    if (input && list) {
+        // Picking more files adds to the pile instead of replacing it, so photos
+        // and a video can be gathered one at a time.
+        input.addEventListener('change', function () {
+            var picked = Array.prototype.slice.call(input.files || []);
+            var warnings = [];
+            var stagedKey = {};
+            var photoCount = 0;
+            var videoCount = 0;
+
+            staged.forEach(function (file) {
+                stagedKey[fileKey(file)] = true;
+                if (isVideoFile(file)) { videoCount++; } else { photoCount++; }
+            });
+
+            if (!canStage) {
+                // No DataTransfer: the browser's own selection is all we get.
+                staged = picked;
+                stagedUrls = staged.map(function (file) { return URL.createObjectURL(file); });
+                renderFiles();
+                return;
+            }
+
+            picked.forEach(function (file) {
+                var video = isVideoFile(file);
+                var knownType = video
+                    ? videoTypes.indexOf(file.type) > -1
+                    : imageTypes.indexOf(file.type) > -1;
+                if (!knownType) {
+                    warnings.push(file.name + ' is not a JPG, PNG, WEBP, MP4 or WEBM file.');
+                    return;
+                }
+                if (stagedKey[fileKey(file)]) return;   // already in the pile
+
+                if (video) {
+                    if (videoCount >= limits.videos) {
+                        warnings.push('Only ' + limits.videos + ' video can be attached — remove the one you have first.');
+                        return;
+                    }
+                    if (file.size > limits.videoBytes) {
+                        warnings.push(file.name + ' is over ' + Math.round(limits.videoBytes / 1048576) + ' MB.');
+                        return;
+                    }
+                    videoCount++;
+                } else {
+                    if (photoCount >= limits.photos) {
+                        warnings.push('You can attach up to ' + limits.photos + ' photos.');
+                        return;
+                    }
+                    if (file.size > limits.imageBytes) {
+                        warnings.push(file.name + ' is over ' + Math.round(limits.imageBytes / 1048576) + ' MB.');
+                        return;
+                    }
+                    photoCount++;
+                }
+
+                stagedKey[fileKey(file)] = true;
+                staged.push(file);
+                stagedUrls.push(URL.createObjectURL(file));
+            });
+
+            syncInput();
+            renderFiles(warnings);
+        });
+    }
+
+    // ── Attachment viewer ────────────────────────────────────────────────
+    var viewer = document.getElementById('rr-viewer');
+    var viewerStage = viewer ? viewer.querySelector('[data-viewer-stage]') : null;
+    var viewerCaption = viewer ? viewer.querySelector('[data-viewer-caption]') : null;
+
+    function openViewer(kind, src, caption) {
+        if (!viewer || !viewerStage) return;
+        viewerStage.innerHTML = '';
+
+        var media;
+        if (kind === 'video') {
+            media = document.createElement('video');
+            media.setAttribute('controls', '');
+            media.setAttribute('playsinline', '');
+            media.autoplay = true;
+        } else {
+            media = document.createElement('img');
+            media.alt = caption || 'Review attachment';
+        }
+        media.src = src;
+        viewerStage.appendChild(media);
+
+        if (viewerCaption) viewerCaption.textContent = caption || '';
+        viewer.hidden = false;
+        document.body.classList.add('rr-viewer-open');
+        var closeBtn = viewer.querySelector('.rr-viewer-close');
+        if (closeBtn) closeBtn.focus();
+    }
+
+    function closeViewer() {
+        if (!viewer) return;
+        viewer.hidden = true;
+        document.body.classList.remove('rr-viewer-open');
+        if (viewerStage) viewerStage.innerHTML = '';   // stops playback too
+    }
+
+    if (viewer) {
+        viewer.addEventListener('click', function (event) {
+            if (event.target.closest('[data-viewer-close]')) closeViewer();
+        });
+    }
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && viewer && !viewer.hidden) closeViewer();
+    });
+
+    document.addEventListener('click', function (event) {
+        // View an attachment (pending thumbnail or an uploaded one).
+        var open = event.target.closest('[data-open-src]');
+        if (open) {
+            event.preventDefault();
+            openViewer(
+                open.getAttribute('data-open-kind'),
+                open.getAttribute('data-open-src'),
+                open.getAttribute('data-open-name')
+            );
+            return;
+        }
+
+        // X on a file that has not been submitted yet: drop it from the pile.
+        var removePending = event.target.closest('[data-remove-pending]');
+        if (removePending) {
+            event.preventDefault();
+            var tile = removePending.closest('[data-index]');
+            var index = tile ? Number(tile.getAttribute('data-index')) : NaN;
+            if (!isNaN(index) && staged[index]) {
+                URL.revokeObjectURL(stagedUrls[index]);
+                staged.splice(index, 1);
+                stagedUrls.splice(index, 1);
+                syncInput();
+                renderFiles();
+            }
+            return;
+        }
+
+        // X on an attachment from an earlier save: delete it on the server.
+        var removeSaved = event.target.closest('[data-remove-saved]');
+        if (removeSaved) {
+            event.preventDefault();
+            var savedTile = removeSaved.closest('[data-saved-media]');
+            var mediaId = savedTile ? Number(savedTile.getAttribute('data-saved-media')) : 0;
+            if (!mediaId) return;
+
+            removeSaved.disabled = true;
+            var body = new FormData();
+            body.append('action', 'delete_media');
+            body.append('media_id', String(mediaId));
+            body.append('ref', refInput ? refInput.value : '');
+
+            fetch(window.location.href, {
+                method: 'POST',
+                body: body,
+                credentials: 'same-origin',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+                .then(function (response) { return response.json(); })
+                .then(function (data) {
+                    if (!data || !data.ok) throw new Error('remove failed');
+                    savedTile.remove();
+                    var savedList = document.querySelector('[data-rr-saved]');
+                    if (savedList && !savedList.children.length) savedList.remove();
+                })
+                .catch(function () {
+                    removeSaved.disabled = false;
+                    alert('We could not remove that attachment. Please try again.');
+                });
+        }
+    });
 
     // ── Unsaved-changes guard ────────────────────────────────────────────
     // Any in-progress edit makes leaving the page destructive, so both in-app

@@ -27,8 +27,22 @@ $contactOld = [
 
 // Signed-in customers get their details filled in automatically.
 if (!empty($_SESSION['user_id']) && ($_SESSION['role'] ?? '') === 'customer') {
-    $contactOld['name']  = trim(($_SESSION['first_name'] ?? '') . ' ' . ($_SESSION['last_name'] ?? ''));
-    $contactOld['email'] = (string) ($_SESSION['email'] ?? '');
+    try {
+            require_once __DIR__ . '/config/database.php';
+            $contactPrefill = getDatabaseConnection()->prepare('SELECT first_name, last_name, email FROM users WHERE id = :id LIMIT 1');
+            $contactPrefill->execute(['id' => (int) $_SESSION['user_id']]);
+            $contactPrefillRow = $contactPrefill->fetch() ?: [];
+            if ($contactPrefillRow) {
+                $contactOld['name']  = trim(($contactPrefillRow['first_name'] ?? '') . ' ' . ($contactPrefillRow['last_name'] ?? ''));
+                $contactOld['email'] = (string) ($contactPrefillRow['email'] ?? '');
+            } else {
+                $contactOld['name']  = trim(($_SESSION['first_name'] ?? '') . ' ' . ($_SESSION['last_name'] ?? ''));
+                $contactOld['email'] = (string) ($_SESSION['email'] ?? '');
+            }
+        } catch (Throwable) {
+            $contactOld['name']  = trim(($_SESSION['first_name'] ?? '') . ' ' . ($_SESSION['last_name'] ?? ''));
+            $contactOld['email'] = (string) ($_SESSION['email'] ?? '');
+        }
 }
 
 $contactDirectionsUrl = 'https://www.google.com/maps/search/?api=1&query=Bread+Break+Estrella+Village+Guiguinto+Bulacan';
@@ -76,15 +90,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$contactErrors) {
         try {
             require_once __DIR__ . '/config/database.php';
+            require_once __DIR__ . '/includes/contact_messages.php';
             $contactPdo = getDatabaseConnection();
-            $contactPdo->exec("CREATE TABLE IF NOT EXISTS contact_messages (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                name VARCHAR(120) NOT NULL,
-                email VARCHAR(190) NOT NULL,
-                subject VARCHAR(120) NOT NULL,
-                message TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            ensureContactMessageTables($contactPdo);
 
             $contactInsert = $contactPdo->prepare(
                 'INSERT INTO contact_messages (name, email, subject, message) VALUES (:name, :email, :subject, :message)'

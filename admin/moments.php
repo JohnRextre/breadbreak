@@ -43,9 +43,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $pdo) {
                 break;
 
             case 'remove_post':
-                if (mb_strlen($reason) < 5) {
+                $typeStmt = $pdo->prepare('SELECT post_type FROM bread_moments WHERE id = :id');
+                $typeStmt->execute(['id' => $momentId]);
+                $postType = (string) ($typeStmt->fetchColumn() ?: 'moment');
+                if ($postType !== 'promotion' && mb_strlen($reason) < 5) {
                     $_SESSION['admin_moments_notice'] = 'Error: write the message for the owner first (at least 5 characters).';
                     break;
+                }
+                if ($reason === '') {
+                    $reason = 'Removed by the admin.';
                 }
                 $remove = $pdo->prepare(
                     "UPDATE bread_moments
@@ -123,6 +129,21 @@ $reportRows = [];
 $pendingRows = [];
 $allRows = [];
 
+/* ── Search & sort ───────────────────────────────────────────────────── */
+$search = trim((string) ($_GET['search'] ?? ''));
+$sort   = (string) ($_GET['sort'] ?? 'newest');
+$sortOptions = [
+    'newest'  => 'Sort: Newest',
+    'oldest'  => 'Sort: Oldest',
+    'views'   => 'Sort: Most views',
+    'reports' => 'Sort: Most reports',
+    'title'   => 'Sort: Title (A–Z)',
+];
+if (!isset($sortOptions[$sort])) {
+    $sort = 'newest';
+}
+$searchLike = '%' . $search . '%';
+
 if ($pdo) {
     $counts['reports']    = (int) $pdo->query('SELECT COUNT(DISTINCT moment_id) FROM bread_moment_reports')->fetchColumn();
     $counts['pending']    = (int) $pdo->query("SELECT COUNT(*) FROM bread_moments WHERE moderation_status = 'pending'")->fetchColumn();
@@ -131,7 +152,13 @@ if ($pdo) {
     $counts['total']      = (int) $pdo->query('SELECT COUNT(*) FROM bread_moments')->fetchColumn();
 
     if ($tab === 'reports') {
-        $reportRows = $pdo->query("
+        $reportsOrder = match ($sort) {
+            'oldest'  => 'first_reported ASC',
+            'reports' => 'report_count DESC, first_reported ASC',
+            'title'   => 'm.title ASC',
+            default   => 'first_reported DESC',
+        };
+        $stmt = $pdo->prepare("
             SELECT m.id, m.title, m.post_type, m.moderation_status, m.created_at,
                    u.first_name,
                    COUNT(r.id) AS report_count,
@@ -141,13 +168,22 @@ if ($pdo) {
             FROM bread_moment_reports r
             JOIN bread_moments m ON m.id = r.moment_id
             JOIN users u ON u.id = m.user_id
+            LEFT JOIN inventory_items pi ON pi.id = m.product_id
+            WHERE (m.title LIKE ? OR u.first_name LIKE ? OR pi.name LIKE ?)
             GROUP BY m.id, m.title, m.post_type, m.moderation_status, m.created_at, u.first_name
-            ORDER BY report_count DESC, first_reported ASC
-        ")->fetchAll();
+            ORDER BY {$reportsOrder}
+        ");
+        $stmt->execute([$searchLike, $searchLike, $searchLike]);
+        $reportRows = $stmt->fetchAll();
     }
 
     if ($tab === 'pending') {
-        $pendingRows = $pdo->query("
+        $pendingOrder = match ($sort) {
+            'oldest' => 'm.created_at ASC',
+            'title'  => 'm.title ASC',
+            default  => 'm.created_at DESC',
+        };
+        $stmt = $pdo->prepare("
             SELECT m.id, m.title, m.body, m.created_at, m.moderation_status, m.moderation_reason, m.moderated_at,
                    u.first_name, pi.name AS product_name,
                    (SELECT p.id FROM bread_moment_photos p WHERE p.moment_id = m.id ORDER BY p.position ASC, p.id ASC LIMIT 1) AS photo_id
@@ -155,22 +191,35 @@ if ($pdo) {
             JOIN users u ON u.id = m.user_id
             LEFT JOIN inventory_items pi ON pi.id = m.product_id
             WHERE m.moderation_status = 'pending' AND m.post_type = 'promotion'
-            ORDER BY m.created_at ASC
-        ")->fetchAll();
+              AND (m.title LIKE ? OR u.first_name LIKE ? OR pi.name LIKE ?)
+            ORDER BY {$pendingOrder}
+        ");
+        $stmt->execute([$searchLike, $searchLike, $searchLike]);
+        $pendingRows = $stmt->fetchAll();
     }
 
     if ($tab === 'all') {
-        $allRows = $pdo->query("
+        $allOrder = match ($sort) {
+            'oldest'  => 'm.created_at ASC',
+            'views'   => 'm.views_count DESC',
+            'reports' => 'report_count DESC',
+            'title'   => 'm.title ASC',
+            default   => 'm.created_at DESC, m.id DESC',
+        };
+        $stmt = $pdo->prepare("
             SELECT m.id, m.title, m.post_type, m.product_id, m.moderation_status, m.moderation_reason,
-                   m.views_count, m.created_at, u.first_name, pi.name AS product_name,
+                   m.body, m.views_count, m.created_at, u.first_name, pi.name AS product_name,
                    (SELECT p.id FROM bread_moment_photos p WHERE p.moment_id = m.id ORDER BY p.position ASC, p.id ASC LIMIT 1) AS photo_id,
                    (SELECT COUNT(*) FROM bread_moment_reports r WHERE r.moment_id = m.id) AS report_count
             FROM bread_moments m
             JOIN users u ON u.id = m.user_id
             LEFT JOIN inventory_items pi ON pi.id = m.product_id
-            ORDER BY m.created_at DESC, m.id DESC
+            WHERE (m.title LIKE ? OR u.first_name LIKE ? OR pi.name LIKE ?)
+            ORDER BY {$allOrder}
             LIMIT 50
-        ")->fetchAll();
+        ");
+        $stmt->execute([$searchLike, $searchLike, $searchLike]);
+        $allRows = $stmt->fetchAll();
     }
 }
 
@@ -183,7 +232,7 @@ $noticeIsError = str_starts_with($notice, 'Error:');
 
 require __DIR__ . '/../includes/admin_header.php';
 ?>
-<section class="page-intro">
+<section class="page-intro page-intro-hero">
     <div>
         <h2>BreadMoments moderation</h2>
         <p>Review reported posts, approve store promotions from the staff, and keep the feed within the community guidelines.</p>
@@ -240,6 +289,26 @@ require __DIR__ . '/../includes/admin_header.php';
             <p class="panel-subtitle">Flagged by the community — dismiss the reports, or remove the post with a message for the owner.</p>
         </div>
     </div>
+    <form method="GET" class="reports-toolbar">
+        <input type="hidden" name="tab" value="reports" />
+        <div class="reports-toolbar-left">
+            <label class="reports-search">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input type="search" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Search posts, authors, products…" aria-label="Search reported posts" />
+            </label>
+        </div>
+        <div class="reports-toolbar-right">
+            <?php if ($search !== '' || $sort !== 'newest'): ?>
+                <a href="?tab=reports" class="reports-chip is-clear"><i class="fa-solid fa-xmark"></i> Clear</a>
+            <?php endif; ?>
+            <span class="reports-count"><?php echo count($reportRows); ?> posts</span>
+            <select name="sort" class="reports-sort" onchange="this.form.submit()" aria-label="Sort reported posts">
+                <?php foreach ($sortOptions as $key => $label): ?>
+                    <option value="<?php echo $key; ?>" <?php echo $sort === $key ? 'selected' : ''; ?>><?php echo $label; ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+    </form>
     <?php if (!$reportRows): ?>
         <p class="empty-state">No reported posts right now — the feed is clean.</p>
     <?php else: ?>
@@ -277,6 +346,7 @@ require __DIR__ . '/../includes/admin_header.php';
                         data-open-modal="remove-modal"
                         data-moment-id="<?php echo (int) $row['id']; ?>"
                         data-moment-title="<?php echo htmlspecialchars($row['title']); ?>"
+                        data-moment-raw-type="<?php echo htmlspecialchars((string) ($row['post_type'] ?? 'moment')); ?>"
                         <?php if ($row['moderation_status'] === 'removed'): ?>disabled<?php endif; ?>>
                     <i class="fa-solid fa-trash-can"></i> Remove post
                 </button>
@@ -294,6 +364,26 @@ require __DIR__ . '/../includes/admin_header.php';
             <p class="panel-subtitle">Staff promotions — approve to publish, or send back with a reason so the staff can revise and resubmit.</p>
         </div>
     </div>
+    <form method="GET" class="reports-toolbar">
+        <input type="hidden" name="tab" value="pending" />
+        <div class="reports-toolbar-left">
+            <label class="reports-search">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input type="search" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Search promotions, staff, products…" aria-label="Search pending promotions" />
+            </label>
+        </div>
+        <div class="reports-toolbar-right">
+            <?php if ($search !== '' || $sort !== 'newest'): ?>
+                <a href="?tab=pending" class="reports-chip is-clear"><i class="fa-solid fa-xmark"></i> Clear</a>
+            <?php endif; ?>
+            <span class="reports-count"><?php echo count($pendingRows); ?> posts</span>
+            <select name="sort" class="reports-sort" onchange="this.form.submit()" aria-label="Sort pending promotions">
+                <?php foreach ($sortOptions as $key => $label): ?>
+                    <option value="<?php echo $key; ?>" <?php echo $sort === $key ? 'selected' : ''; ?>><?php echo $label; ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+    </form>
     <?php if (!$pendingRows): ?>
         <p class="empty-state">Nothing waiting for review — every submitted promotion has been handled.</p>
     <?php else: ?>
@@ -351,6 +441,26 @@ require __DIR__ . '/../includes/admin_header.php';
             <p class="panel-subtitle">Every BreadMoment with its status — the last 50.</p>
         </div>
     </div>
+    <form method="GET" class="reports-toolbar">
+        <input type="hidden" name="tab" value="all" />
+        <div class="reports-toolbar-left">
+            <label class="reports-search">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input type="search" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Search posts, authors, products…" aria-label="Search all posts" />
+            </label>
+        </div>
+        <div class="reports-toolbar-right">
+            <?php if ($search !== '' || $sort !== 'newest'): ?>
+                <a href="?tab=all" class="reports-chip is-clear"><i class="fa-solid fa-xmark"></i> Clear</a>
+            <?php endif; ?>
+            <span class="reports-count"><?php echo count($allRows); ?> posts</span>
+            <select name="sort" class="reports-sort" onchange="this.form.submit()" aria-label="Sort all posts">
+                <?php foreach ($sortOptions as $key => $label): ?>
+                    <option value="<?php echo $key; ?>" <?php echo $sort === $key ? 'selected' : ''; ?>><?php echo $label; ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+    </form>
     <?php if (!$allRows): ?>
         <p class="empty-state">No posts yet.</p>
     <?php else: ?>
@@ -385,11 +495,21 @@ require __DIR__ . '/../includes/admin_header.php';
                     <td><?php echo htmlspecialchars(momentTimeAgo($row['created_at'])); ?></td>
                     <td class="mod-cell-actions">
                         <?php if ($row['moderation_status'] === 'visible'): ?>
-                            <button type="button" class="admin-button danger-button mod-table-btn"
-                                    data-open-modal="remove-modal"
+                            <button type="button" class="admin-button secondary mod-table-btn"
+                                    data-open-modal="view-modal"
                                     data-moment-id="<?php echo (int) $row['id']; ?>"
-                                    data-moment-title="<?php echo htmlspecialchars($row['title']); ?>">
-                                <i class="fa-solid fa-trash-can"></i> Remove
+                                    data-moment-title="<?php echo htmlspecialchars($row['title']); ?>"
+                                    data-moment-author="<?php echo htmlspecialchars($modAuthorName($row)); ?>"
+                                    data-moment-type="<?php echo ($row['post_type'] ?? 'moment') === 'promotion' ? 'Promotion' : 'Moment'; ?>"
+                                    data-moment-status="<?php echo htmlspecialchars(momentStatusLabel((string) $row['moderation_status'])[0]); ?>"
+                                    data-moment-views="<?php echo (int) $row['views_count']; ?>"
+                                    data-moment-reports="<?php echo (int) $row['report_count']; ?>"
+                                    data-moment-posted="<?php echo htmlspecialchars(momentTimeAgo($row['created_at'])); ?>"
+                                    data-moment-body="<?php echo htmlspecialchars((string) ($row['body'] ?? '')); ?>"
+                                    data-moment-photo="<?php echo $row['photo_id'] ? '/BreadBreak/api/moment-image.php?id=' . (int) $row['photo_id'] : ''; ?>"
+                                    data-moment-reason="<?php echo htmlspecialchars((string) ($row['moderation_reason'] ?? '')); ?>"
+                                    data-moment-raw-type="<?php echo htmlspecialchars((string) ($row['post_type'] ?? 'moment')); ?>">
+                                <i class="fa-solid fa-eye"></i> View details
                             </button>
                         <?php elseif ($row['moderation_status'] === 'removed'): ?>
                             <form method="POST" class="mod-form">
@@ -430,13 +550,14 @@ require __DIR__ . '/../includes/admin_header.php';
         <input type="hidden" name="action" value="remove_post" />
         <input type="hidden" name="tab" value="<?php echo $tab; ?>" />
         <input type="hidden" name="moment_id" class="modal-moment-id" value="0" />
+        <input type="hidden" name="post_type" class="modal-moment-raw-type" value="moment" />
         <div class="form-field">
             <label for="remove-post-title">Post</label>
             <input id="remove-post-title" class="modal-moment-title" type="text" readonly value="" />
         </div>
-        <div class="form-field">
+        <div class="form-field" id="remove-reason-field">
             <label for="remove-reason">Message to the owner</label>
-            <textarea id="remove-reason" name="reason" required placeholder="Hindi ito pasok sa community guidelines dahil…"></textarea>
+            <textarea id="remove-reason" name="reason" placeholder="Hindi ito pasok sa community guidelines dahil…"></textarea>
             <small class="mod-hint">Shown to the owner as the reason the post was taken down.</small>
         </div>
         <div class="modal-actions">
@@ -472,14 +593,98 @@ require __DIR__ . '/../includes/admin_header.php';
     </form>
 </div>
 
+<div class="admin-modal" id="view-modal" role="dialog" aria-modal="true" aria-labelledby="view-modal-title">
+    <div class="modal-heading">
+        <div><span class="modal-kicker">BreadMoments</span><h2 id="view-modal-title">Post details</h2></div>
+        <button class="modal-close" type="button" data-close-modal aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="view-modal-photo" id="view-modal-photo"><i class="fa-solid fa-bread-slice" aria-hidden="true"></i></div>
+    <h3 id="view-modal-title-text" style="margin: 14px 0 4px; font-family: 'Manrope', sans-serif; font-size: 17px;"></h3>
+    <p id="view-modal-body" style="margin: 0 0 16px; color: var(--admin-muted); font-size: 13px; line-height: 1.6;"></p>
+    <dl class="item-detail-list" style="display: grid; gap: 8px; margin: 0; font-size: 13px;">
+        <div style="display: flex; justify-content: space-between; gap: 15px; border-bottom: 1px solid #f0ece8; padding-bottom: 7px;"><dt style="color: var(--admin-muted);">Author</dt><dd id="view-modal-author" style="margin: 0; font-weight: 600; text-align: right;"></dd></div>
+        <div style="display: flex; justify-content: space-between; gap: 15px; border-bottom: 1px solid #f0ece8; padding-bottom: 7px;"><dt style="color: var(--admin-muted);">Type</dt><dd id="view-modal-type" style="margin: 0; font-weight: 600; text-align: right;"></dd></div>
+        <div style="display: flex; justify-content: space-between; gap: 15px; border-bottom: 1px solid #f0ece8; padding-bottom: 7px;"><dt style="color: var(--admin-muted);">Status</dt><dd id="view-modal-status" style="margin: 0; font-weight: 600; text-align: right;"></dd></div>
+        <div style="display: flex; justify-content: space-between; gap: 15px; border-bottom: 1px solid #f0ece8; padding-bottom: 7px;"><dt style="color: var(--admin-muted);">Views</dt><dd id="view-modal-views" style="margin: 0; font-weight: 600; text-align: right;"></dd></div>
+        <div style="display: flex; justify-content: space-between; gap: 15px; border-bottom: 1px solid #f0ece8; padding-bottom: 7px;"><dt style="color: var(--admin-muted);">Reports</dt><dd id="view-modal-reports" style="margin: 0; font-weight: 600; text-align: right;"></dd></div>
+        <div style="display: flex; justify-content: space-between; gap: 15px;"><dt style="color: var(--admin-muted);">Posted</dt><dd id="view-modal-posted" style="margin: 0; font-weight: 600; text-align: right;"></dd></div>
+    </dl>
+    <div class="modal-actions" style="margin-top: 20px;">
+        <button class="admin-button secondary" type="button" data-close-modal>Close</button>
+        <button class="admin-button danger-button" type="button" id="view-modal-remove"><i class="fa-solid fa-trash-can"></i> Remove post</button>
+    </div>
+</div>
+
 <script>
     // Copy the clicked row's post into whichever decision modal is opening.
     document.querySelectorAll('[data-moment-id]').forEach(function (button) {
         button.addEventListener('click', function () {
             var id = button.getAttribute('data-moment-id') || '0';
             var title = button.getAttribute('data-moment-title') || '';
+            var type = button.getAttribute('data-moment-raw-type') || 'moment';
             document.querySelectorAll('.modal-moment-id').forEach(function (input) { input.value = id; });
             document.querySelectorAll('.modal-moment-title').forEach(function (input) { input.value = title; });
+            document.querySelectorAll('.modal-moment-raw-type').forEach(function (input) { input.value = type; });
+        });
+    });
+
+    // Fill the "View details" modal from the clicked row's data attributes.
+    document.querySelectorAll('[data-open-modal="view-modal"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            var photo = button.getAttribute('data-moment-photo') || '';
+            var photoBox = document.getElementById('view-modal-photo');
+            photoBox.innerHTML = photo
+                ? '<img src="' + photo + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;" />'
+                : '<i class="fa-solid fa-bread-slice" aria-hidden="true"></i>';
+            document.getElementById('view-modal-title-text').textContent = button.getAttribute('data-moment-title') || '';
+            document.getElementById('view-modal-body').textContent = button.getAttribute('data-moment-body') || '';
+            document.getElementById('view-modal-author').textContent = button.getAttribute('data-moment-author') || '';
+            document.getElementById('view-modal-type').textContent = button.getAttribute('data-moment-type') || '';
+            document.getElementById('view-modal-status').textContent = button.getAttribute('data-moment-status') || '';
+            document.getElementById('view-modal-views').textContent = button.getAttribute('data-moment-views') || '0';
+            document.getElementById('view-modal-reports').textContent = button.getAttribute('data-moment-reports') || '0';
+            document.getElementById('view-modal-posted').textContent = button.getAttribute('data-moment-posted') || '';
+
+            var removeBtn = document.getElementById('view-modal-remove');
+            removeBtn.setAttribute('data-moment-id', button.getAttribute('data-moment-id') || '0');
+            removeBtn.setAttribute('data-moment-title', button.getAttribute('data-moment-title') || '');
+            removeBtn.setAttribute('data-moment-raw-type', button.getAttribute('data-moment-raw-type') || 'moment');
+        });
+    });
+
+    // "Remove post" inside the details modal opens the remove modal with the same post.
+    document.getElementById('view-modal-remove').addEventListener('click', function () {
+        var id = this.getAttribute('data-moment-id') || '0';
+        var title = this.getAttribute('data-moment-title') || '';
+        var type = this.getAttribute('data-moment-raw-type') || 'moment';
+        document.querySelectorAll('#remove-modal .modal-moment-id').forEach(function (input) { input.value = id; });
+        document.querySelectorAll('#remove-modal .modal-moment-title').forEach(function (input) { input.value = title; });
+        document.querySelectorAll('#remove-modal .modal-moment-raw-type').forEach(function (input) { input.value = type; });
+        applyRemoveTypeRules(type);
+        // open remove-modal using the shared opener
+        document.querySelectorAll('.admin-modal').forEach(function (m) { m.classList.remove('is-open'); });
+        document.getElementById('remove-modal').classList.add('is-open');
+    });
+
+    // Customer posts need a rules-violation message; staff/admin promotions don't.
+    function applyRemoveTypeRules(type) {
+        var field = document.getElementById('remove-reason-field');
+        var textarea = document.getElementById('remove-reason');
+        if (type === 'promotion') {
+            field.style.display = 'none';
+            textarea.removeAttribute('required');
+            textarea.value = '';
+        } else {
+            field.style.display = '';
+            textarea.setAttribute('required', 'required');
+            if (textarea.value.trim() === '') {
+                textarea.value = 'This post was removed for violating the BreadBreak community rules and guidelines.';
+            }
+        }
+    }
+    document.querySelectorAll('[data-open-modal="remove-modal"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            applyRemoveTypeRules(button.getAttribute('data-moment-raw-type') || 'moment');
         });
     });
 </script>

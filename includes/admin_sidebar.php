@@ -5,9 +5,11 @@ $navigation = [
         ['users', 'User Management', 'users'],
         ['inventory', 'Inventory', 'box'],
         ['orders', 'Orders', 'clipboard'],
+        ['reviews', 'Reviews', 'star'],
         ['vouchers', 'Vouchers', 'ticket'],
         ['reports', 'Reports & Analytics', 'chart'],
         ['moments', 'BreadMoments', 'moments'],
+        ['messages', 'Contact Messages', 'envelope'],
     ],
     'system' => [
         ['logs', 'System Logs', 'activity'],
@@ -23,6 +25,7 @@ $icons = [
     'users' => '<i class="fa-solid fa-users"></i>',
     'box' => '<i class="fa-solid fa-boxes-stacked"></i>',
     'clipboard' => '<i class="fa-solid fa-receipt"></i>',
+    'star' => '<i class="fa-solid fa-star"></i>',
     'ticket' => '<i class="fa-solid fa-ticket"></i>',
     'chart' => '<i class="fa-solid fa-chart-line"></i>',
     'moments' => '<i class="fa-solid fa-camera-retro"></i>',
@@ -30,6 +33,7 @@ $icons = [
     'settings' => '<i class="fa-solid fa-gear"></i>',
     'profile' => '<i class="fa-solid fa-circle-user"></i>',
     'logout' => '<i class="fa-solid fa-right-from-bracket"></i>',
+    'envelope' => '<i class="fa-solid fa-envelope"></i>',
 ];
 ?>
 <aside class="admin-sidebar" id="admin-sidebar">

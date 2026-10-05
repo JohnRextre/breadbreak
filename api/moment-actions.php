@@ -32,6 +32,11 @@ function momentApiAssertVisible(array $post, int $viewerId): void
         return;
     }
     $role = $_SESSION['role'] ?? '';
+    $status = (string) ($post['moderation_status'] ?? 'visible');
+    // Removed/hidden posts never allow new likes or comments — not even the owner.
+    if ($status === 'removed' && $role !== 'admin') {
+        momentApiFail(403, 'This post was removed and is no longer available.');
+    }
     if ((int) ($post['user_id'] ?? 0) !== $viewerId && $role !== 'admin') {
         momentApiFail(403, 'This post is not available right now.');
     }

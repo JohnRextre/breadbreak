@@ -18,6 +18,7 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS customer_favorites (customer_id INT NOT N
 $accountStatement = $pdo->prepare('SELECT first_name, last_name, phone, email, profile_data, profile_mime FROM users WHERE id = :id LIMIT 1');
 $accountStatement->execute(['id' => $customerId]);
 $account = $accountStatement->fetch() ?: [];
+
 $profileError = '';
 $profileSuccess = '';
 

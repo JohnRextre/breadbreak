@@ -7,6 +7,7 @@ $staffNavigation = [
         ['order-history', 'Order History', 'history'],
         ['reports', 'Reports & Analytics', 'chart'],
         ['moments', 'BreadMoments', 'moments'],
+        ['promotions', 'Shop Promotions', 'shop'],
     ],
     'account' => [
         ['profile', 'My Account', 'profile'],
@@ -19,6 +20,7 @@ $staffIcons = [
     'history' => '<i class="fa-solid fa-clock-rotate-left"></i>',
     'chart' => '<i class="fa-solid fa-chart-line"></i>',
     'moments' => '<i class="fa-solid fa-bullhorn"></i>',
+    'shop' => '<i class="fa-solid fa-shop"></i>',
     'profile' => '<i class="fa-solid fa-circle-user"></i>',
     'logout' => '<i class="fa-solid fa-right-from-bracket"></i>',
 ];

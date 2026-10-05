@@ -194,44 +194,123 @@
 .rr-drop small { color: var(--muted); font-size: 11.5px; font-weight: 600; }
 .rr-drop input[type="file"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 
+/* Chosen files and already-saved attachments share one tile: a tappable
+   thumbnail, an X to take it away, and the file name underneath. */
 .rr-file-list,
 .rr-media-list {
     list-style: none;
     margin: .8rem 0 0;
     padding: 0;
     display: grid;
-    gap: .4rem;
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: .75rem;
 }
-.rr-file-list li,
-.rr-media-list li {
+.rr-file-list:empty,
+.rr-media-list:empty { display: none; }
+
+.rr-tile {
+    position: relative;
     display: flex;
-    align-items: center;
-    gap: .6rem;
-    padding: .55rem .75rem;
-    border: 1px solid rgba(52, 33, 21, .08);
-    border-radius: 12px;
-    background: #fdfaf6;
-    color: var(--brown-700);
-    font-size: 12.5px;
-    font-weight: 700;
-}
-.rr-file-list:empty { display: none; }
-.rr-media-list small { color: var(--muted); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rr-media-tag {
-    display: inline-flex;
-    align-items: center;
+    flex-direction: column;
     gap: .35rem;
-    flex: 0 0 auto;
-    padding: .25rem .55rem;
+    min-width: 0;
+}
+.rr-tile-open {
+    position: relative;
+    display: block;
+    width: 100%;
+    aspect-ratio: 1;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid rgba(52, 33, 21, .1);
+    border-radius: 14px;
+    background: #fdfaf6;
+    cursor: pointer;
+    transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+.rr-tile-open:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent);
+    box-shadow: 0 10px 20px rgba(55, 36, 22, .14);
+}
+.rr-tile-open:focus-visible { outline: 3px solid rgba(201, 121, 64, .45); outline-offset: 2px; }
+.rr-tile-open img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.rr-tile-video {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(140deg, #3a2820, #6d4731);
+    color: #fff;
+}
+.rr-tile-video i {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    padding-left: 2px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, .2);
+    font-size: .85rem;
+}
+.rr-tile-tag {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    padding: .16rem .45rem;
     border-radius: 999px;
-    background: #eef2f7;
-    color: #4a5b6e;
-    font-size: 10.5px;
+    background: rgba(255, 255, 255, .94);
+    color: var(--brown-700);
+    font-size: 9.5px;
     font-weight: 800;
-    letter-spacing: .04em;
+    letter-spacing: .05em;
     text-transform: uppercase;
 }
-.rr-media-tag.is-video { background: #f4d5b8; color: #7c4108; }
+.rr-tile-tag.is-video { background: rgba(255, 240, 227, .96); color: #7c4108; }
+.rr-tile-remove {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(28, 18, 12, .74);
+    color: #fff;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background .15s ease, transform .15s ease;
+}
+.rr-tile-remove:hover { background: #b23026; transform: scale(1.08); }
+.rr-tile-remove:disabled { opacity: .5; cursor: wait; transform: none; }
+.rr-tile-name {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.rr-file-warning {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: flex-start;
+    gap: .5rem;
+    padding: .6rem .8rem;
+    border: 1px solid rgba(200, 40, 40, .18);
+    border-radius: 12px;
+    background: #fdecec;
+    color: #8b1d1d;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.5;
+}
+.rr-file-warning i { margin-top: .15rem; }
 
 /* ── topics ──────────────────────────────────────────────────────────────── */
 
@@ -441,6 +520,88 @@
 
 @media (max-width: 640px) {
     .rr-top-actions { flex-direction: column; align-items: flex-start; }
+}
+
+/* ── Attachment viewer (tap a photo / video to open it) ─────────────────── */
+
+body.rr-viewer-open { overflow: hidden; }
+
+.rr-viewer {
+    position: fixed;
+    inset: 0;
+    z-index: 2100;
+    display: grid;
+    place-items: center;
+    padding: 1.25rem;
+}
+/* Same override as the leave dialog: `display: grid` outranks `hidden`. */
+.rr-viewer[hidden] { display: none; }
+.rr-viewer-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(24, 15, 9, .78);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    animation: rr-fade .16s ease;
+}
+.rr-viewer-card {
+    position: relative;
+    width: min(920px, 100%);
+    max-height: calc(100vh - 2.5rem);
+    display: flex;
+    flex-direction: column;
+    gap: .6rem;
+    padding: 1rem;
+    border: 1px solid rgba(255, 255, 255, .08);
+    border-radius: 22px;
+    background: #171310;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .5);
+    animation: rr-pop .2s cubic-bezier(.2, .9, .3, 1.15);
+}
+.rr-viewer-close {
+    position: absolute;
+    top: .75rem;
+    right: .75rem;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, .16);
+    color: #fff;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background .15s ease, transform .15s ease;
+}
+.rr-viewer-close:hover { background: rgba(255, 255, 255, .3); transform: scale(1.06); }
+.rr-viewer-stage {
+    display: grid;
+    place-items: center;
+    min-height: 180px;
+    overflow: hidden;
+    border-radius: 14px;
+    background: #0f0c0a;
+}
+.rr-viewer-stage img,
+.rr-viewer-stage video {
+    display: block;
+    max-width: 100%;
+    max-height: calc(100vh - 12rem);
+    object-fit: contain;
+}
+.rr-viewer-caption {
+    margin: 0;
+    color: rgba(255, 255, 255, .72);
+    font-size: 12px;
+    font-weight: 600;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* ── Leave this page? dialog ─────────────────────────────────────────────── */

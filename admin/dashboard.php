@@ -142,7 +142,7 @@ if (adminTableExists($pdo, 'order_status_history')) {
          FROM order_status_history h
          LEFT JOIN orders o ON o.id = h.order_id
          ORDER BY h.id DESC
-         LIMIT 8"
+         LIMIT 3"
     )->fetchAll();
 }
 
@@ -247,6 +247,27 @@ require __DIR__ . '/../includes/admin_header.php';
 <div class="dashboard-grid">
     <article class="panel">
         <div class="panel-heading">
+            <h3>Stock Alerts</h3>
+            <a href="<?php echo BASE_URL; ?>/admin/inventory.php?stock=low">Open Monitoring</a>
+        </div>
+        <?php if ($inventoryAlerts): ?>
+        <div class="inventory-stats">
+            <?php foreach ($inventoryAlerts as $alert):
+                $alertQty = (int) $alert['total_quantity'];
+            ?>
+                <a class="inventory-stat <?php echo $alertQty === 0 ? 'empty' : 'low'; ?>" href="<?php echo BASE_URL; ?>/admin/inventory.php?search=<?php echo urlencode($alert['name']); ?>">
+                    <span><?php echo htmlspecialchars($alert['name']); ?></span>
+                    <span><?php echo $alertQty; ?></span>
+                </a>
+            <?php endforeach; ?>
+        </div>
+        <?php else: ?>
+            <p class="empty-state">No low-stock items. Inventory levels are healthy.</p>
+        <?php endif; ?>
+    </article>
+
+    <article class="panel">
+        <div class="panel-heading">
             <h3>Recent Orders</h3>
             <a href="<?php echo BASE_URL; ?>/admin/orders.php">View All Orders</a>
         </div>
@@ -273,27 +294,6 @@ require __DIR__ . '/../includes/admin_header.php';
         </div>
         <?php else: ?>
             <p class="empty-state">No orders yet. They will appear here as soon as customers start ordering.</p>
-        <?php endif; ?>
-    </article>
-
-    <article class="panel">
-        <div class="panel-heading">
-            <h3>Stock Alerts</h3>
-            <a href="<?php echo BASE_URL; ?>/admin/inventory.php?stock=low">Open Monitoring</a>
-        </div>
-        <?php if ($inventoryAlerts): ?>
-        <div class="inventory-stats">
-            <?php foreach ($inventoryAlerts as $alert):
-                $alertQty = (int) $alert['total_quantity'];
-            ?>
-                <a class="inventory-stat <?php echo $alertQty === 0 ? 'empty' : 'low'; ?>" href="<?php echo BASE_URL; ?>/admin/inventory.php?search=<?php echo urlencode($alert['name']); ?>">
-                    <span><?php echo htmlspecialchars($alert['name']); ?></span>
-                    <span><?php echo $alertQty; ?></span>
-                </a>
-            <?php endforeach; ?>
-        </div>
-        <?php else: ?>
-            <p class="empty-state">No low-stock items. Inventory levels are healthy.</p>
         <?php endif; ?>
     </article>
 </div>
@@ -332,15 +332,4 @@ require __DIR__ . '/../includes/admin_header.php';
     <?php endif; ?>
 </section>
 
-<!-- ── Quick Access ── -->
-<section class="panel quick-access">
-    <div class="panel-heading"><h3>Quick Access</h3></div>
-    <div class="quick-links">
-        <a class="quick-link" href="<?php echo BASE_URL; ?>/admin/users.php"><i class="fa-solid fa-users-gear"></i> User Management</a>
-        <a class="quick-link" href="<?php echo BASE_URL; ?>/admin/inventory.php"><i class="fa-solid fa-boxes-stacked"></i> View Inventory</a>
-        <a class="quick-link" href="<?php echo BASE_URL; ?>/admin/orders.php"><i class="fa-solid fa-receipt"></i> View Orders</a>
-        <a class="quick-link" href="<?php echo BASE_URL; ?>/admin/vouchers.php"><i class="fa-solid fa-ticket"></i> Vouchers</a>
-        <a class="quick-link" href="<?php echo BASE_URL; ?>/admin/reports.php"><i class="fa-solid fa-chart-line"></i> View Reports</a>
-    </div>
-</section>
 <?php require __DIR__ . '/../includes/admin_footer.php'; ?>

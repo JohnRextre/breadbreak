@@ -320,3 +320,122 @@ document.addEventListener('DOMContentLoaded', function () {
         deleteForm.addEventListener('submit', function (event) { if (deleteForm.querySelector('[name="delete_mode"]:checked').value === 'quantity') { const input = document.getElementById('delete-quantity'); const current = Number(document.querySelector('[data-delete-variant]').selectedOptions[0] ? document.querySelector('[data-delete-variant]').selectedOptions[0].dataset.quantity : 0); if (!/^[1-9]\d*$/.test(input.value) || Number(input.value) > current) { event.preventDefault(); document.querySelector('[data-delete-error]').textContent = 'Enter a whole number greater than 0 and no greater than the current quantity.'; } } else if (document.getElementById('delete-confirmation').value !== 'Delete') event.preventDefault(); });
     }
 });
+
+/* ── BreadMoments (staff/moments.php): photo preview + character counters ──
+   Guarded with null checks so the other staff pages are unaffected. */
+document.addEventListener('DOMContentLoaded', function () {
+    const promoUpload = document.querySelector('[data-promo-upload]');
+    if (promoUpload) {
+        const input = promoUpload.querySelector('[data-promo-photo-input]');
+        const nameEl = promoUpload.querySelector('[data-promo-photo-name]');
+        const preview = promoUpload.querySelector('[data-promo-photo-preview]');
+        const removeButton = promoUpload.querySelector('[data-promo-photo-remove]');
+        const meta = promoUpload.querySelector('[data-promo-photo-meta]');
+        let previewUrl = '';
+
+        function refreshUpload() {
+            const file = input && input.files && input.files[0];
+            if (file) {
+                if (nameEl) nameEl.textContent = file.name + ' \u00b7 ' + Math.max(1, Math.round(file.size / 1024)) + ' KB';
+                if (preview) {
+                    if (previewUrl) URL.revokeObjectURL(previewUrl);
+                    previewUrl = URL.createObjectURL(file);
+                    preview.src = previewUrl;
+                    preview.hidden = false;
+                }
+                if (meta) meta.hidden = false;
+                promoUpload.classList.add('has-file');
+            } else {
+                if (nameEl) nameEl.textContent = 'No photo selected';
+                if (preview) { preview.removeAttribute('src'); preview.hidden = true; }
+                if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = ''; }
+                if (meta) meta.hidden = true;
+                promoUpload.classList.remove('has-file');
+            }
+        }
+
+        if (input) input.addEventListener('change', refreshUpload);
+        if (removeButton) removeButton.addEventListener('click', function () {
+            if (input) { input.value = ''; input.focus(); }
+            refreshUpload();
+        });
+        refreshUpload();
+    }
+
+    document.querySelectorAll('[data-promo-count]').forEach(function (counter) {
+        const target = document.getElementById(counter.dataset.promoCount);
+        if (!target) return;
+        const max = target.maxLength > 0 ? target.maxLength : 0;
+        function updateCount() {
+            const length = target.value.length;
+            counter.textContent = max ? length + '/' + max : String(length);
+            counter.classList.toggle('is-over', max > 0 && length >= max);
+        }
+        target.addEventListener('input', updateCount);
+        updateCount();
+    });
+});
+
+/* ── Shop Promotions (staff/promotions.php): instant search + sort ────────
+   Guarded with null checks so the other staff pages are unaffected. */
+document.addEventListener('DOMContentLoaded', function () {
+    const list = document.querySelector('[data-promo-list]');
+    if (!list) return;
+
+    const cards = Array.prototype.slice.call(list.querySelectorAll('.mod-card'));
+    const search = document.querySelector('[data-promo-search]');
+    const sort = document.querySelector('[data-promo-sort]');
+    const results = document.querySelector('[data-promo-results]');
+    const noResults = list.querySelector('[data-promo-noresults]');
+    const clear = list.querySelector('[data-promo-clear]');
+    const statusRank = { rejected: 0, removed: 1, pending: 2, live: 3 };
+
+    function timeOf(card) { return Number(card.dataset.time) || 0; }
+    function titleOf(card) { return (card.dataset.title || '').toLowerCase(); }
+    function rankOf(card) {
+        const status = card.dataset.status;
+        return Object.prototype.hasOwnProperty.call(statusRank, status) ? statusRank[status] : 9;
+    }
+
+    function applyPromoFilters() {
+        const query = ((search && search.value) || '').trim().toLowerCase();
+        const mode = (sort && sort.value) || 'newest';
+
+        const ordered = cards.slice().sort(function (a, b) {
+            if (mode === 'oldest') return timeOf(a) - timeOf(b);
+            if (mode === 'title') return titleOf(a).localeCompare(titleOf(b));
+            if (mode === 'status') {
+                const difference = rankOf(a) - rankOf(b);
+                if (difference) return difference;
+            }
+            return timeOf(b) - timeOf(a);
+        });
+
+        let shown = 0;
+        ordered.forEach(function (card) {
+            const haystack = ((card.dataset.title || '') + ' ' + (card.dataset.product || '')).toLowerCase();
+            const matches = !query || haystack.indexOf(query) !== -1;
+            card.hidden = !matches;
+            if (matches) shown++;
+            list.insertBefore(card, noResults || null);
+        });
+
+        if (noResults) noResults.hidden = !(shown === 0 && query);
+        if (results) {
+            results.textContent = shown === cards.length
+                ? cards.length + (cards.length === 1 ? ' promotion' : ' promotions')
+                : shown + ' of ' + cards.length + ' promotions';
+        }
+    }
+
+    if (search) search.addEventListener('input', applyPromoFilters);
+    if (sort) sort.addEventListener('change', applyPromoFilters);
+    if (clear) {
+        clear.addEventListener('click', function () {
+            if (search) { search.value = ''; search.focus(); }
+            applyPromoFilters();
+        });
+    }
+
+    applyPromoFilters();
+});

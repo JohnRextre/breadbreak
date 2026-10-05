@@ -242,11 +242,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if ($isEdit) {
-                $momentOwnStatement = $momentPdo->prepare('SELECT id, post_type FROM bread_moments WHERE id = :id AND user_id = :user_id LIMIT 1');
+                $momentOwnStatement = $momentPdo->prepare('SELECT id, post_type, moderation_status FROM bread_moments WHERE id = :id AND user_id = :user_id LIMIT 1');
                 $momentOwnStatement->execute(['id' => $momentEditId, 'user_id' => $momentUserId]);
                 $momentOwnedPost = $momentOwnStatement->fetch() ?: null;
                 if (!$momentOwnedPost) {
                     $momentErrors['form'] = 'You can only edit your own posts.';
+                } elseif (($momentOwnedPost['moderation_status'] ?? 'visible') !== 'visible') {
+                    $momentErrors['form'] = 'This post can no longer be edited.';
                 } elseif (($momentOwnedPost['post_type'] ?? 'moment') === 'promotion') {
                     // Store promotions live in the staff portal — resend them there.
                     header('Location: /BreadBreak/staff/moments.php?edit=' . $momentEditId);
@@ -385,7 +387,7 @@ unset($_SESSION['moments_form']);
 $momentEditPhotos = [];
 if (!$momentRestoredEdit && $momentIsSignedIn && isset($_GET['edit'])) {
     $momentEditStatement = $momentPdo
-        ? $momentPdo->prepare('SELECT id, title, body, topics, category_id, order_id, post_type FROM bread_moments WHERE id = :id AND user_id = :user_id LIMIT 1')
+        ? $momentPdo->prepare('SELECT id, title, body, topics, category_id, order_id, post_type, moderation_status FROM bread_moments WHERE id = :id AND user_id = :user_id LIMIT 1')
         : null;
     if ($momentEditStatement) {
         $momentEditStatement->execute(['id' => (int) $_GET['edit'], 'user_id' => $momentUserId]);
@@ -396,6 +398,12 @@ if (!$momentRestoredEdit && $momentIsSignedIn && isset($_GET['edit'])) {
 
     if (!$momentEditRow) {
         $_SESSION['moments_notice'] = 'You can only edit your own posts.';
+        header('Location: /BreadBreak/moments.php');
+        exit;
+    }
+
+    if (($momentEditRow['moderation_status'] ?? 'visible') !== 'visible') {
+        $_SESSION['moments_notice'] = 'That post can no longer be edited.';
         header('Location: /BreadBreak/moments.php');
         exit;
     }

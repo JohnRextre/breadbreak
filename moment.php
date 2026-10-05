@@ -51,11 +51,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: /BreadBreak/login.php?redirect=moments');
             exit;
         }
-        $momentOwnerStatement = $momentPdo->prepare('SELECT user_id, moderation_status FROM bread_moments WHERE id = :id LIMIT 1');
+        $momentOwnerStatement = $momentPdo->prepare('SELECT user_id, moderation_status, post_type FROM bread_moments WHERE id = :id LIMIT 1');
         $momentOwnerStatement->execute(['id' => $momentId]);
         $momentOwnerRow = $momentOwnerStatement->fetch() ?: null;
         if (!$momentOwnerRow || $momentOwnerRow['moderation_status'] !== 'visible') {
             $_SESSION['moment_notice'] = 'That post is not available right now.';
+            header('Location: /BreadBreak/moment.php?id=' . $momentId);
+            exit;
+        }
+        if (($momentOwnerRow['post_type'] ?? 'moment') === 'promotion') {
+            $_SESSION['moment_notice'] = 'Store promotions cannot be reported.';
             header('Location: /BreadBreak/moment.php?id=' . $momentId);
             exit;
         }
@@ -277,22 +282,26 @@ unset($_SESSION['moment_notice']);
         <div class="moment-detail-top">
             <a class="moment-back" href="/BreadBreak/moments.php"><i class="fa-solid fa-arrow-left"></i> Back to BreadMoments</a>
 
-            <?php if (!($momentIsOwn && $momentIsPromo)): ?>
+            <?php if (!$momentIsPromo): ?>
             <!-- 3-dots menu -->
             <div class="moment-menu">
                 <button type="button" class="moment-menu-btn" id="momentMenuBtn" aria-haspopup="true" aria-expanded="false" aria-label="Post options">
                     <i class="fa-solid fa-ellipsis-vertical"></i>
                 </button>
                 <div class="moment-menu-pop" id="momentMenuPop" hidden>
-                    <?php if ($momentIsOwn): ?>
+                    <?php if ($momentIsOwn && $momentStatus === 'visible'): ?>
                         <a href="/BreadBreak/moments.php?edit=<?php echo (int) $momentId; ?>&next=moment"><i class="fa-solid fa-pen"></i> Edit post</a>
+                    <?php endif; ?>
+                    <?php if ($momentIsOwn): ?>
                         <form method="POST" action="/BreadBreak/moment.php" data-confirm-post-delete>
                             <input type="hidden" name="action" value="delete" />
                             <input type="hidden" name="moment_id" value="<?php echo (int) $momentId; ?>" />
                             <button type="submit" class="is-danger"><i class="fa-solid fa-trash"></i> Delete post</button>
                         </form>
                     <?php else: ?>
+                        <?php if (!$momentIsPromo): ?>
                         <button type="button" id="momentReportOpen"><i class="fa-solid fa-flag"></i> Report post</button>
+                        <?php endif; ?>
                     <?php endif; ?>
                 </div>
             </div>
@@ -397,7 +406,7 @@ unset($_SESSION['moment_notice']);
                 <?php endif; ?>
             </div>
 
-            <?php if (!$momentIsVoucherAd): ?>
+            <?php if (!$momentIsVoucherAd && $momentStatus === 'visible'): ?>
             <!-- Likes total sits ABOVE the like icon row -->
             <footer class="moment-detail-foot">
                 <p class="moment-likes-row"><i class="fa-solid fa-heart"></i> <b id="momentLikeCount"><?php echo $momentLikeCount; ?></b> like<?php echo $momentLikeCount === 1 ? '' : 's'; ?></p>
@@ -422,7 +431,7 @@ unset($_SESSION['moment_notice']);
         </article>
 
         <!-- Comments — voucher ads are announcements, not conversations -->
-        <?php if (!$momentIsVoucherAd): ?>
+        <?php if (!$momentIsVoucherAd && $momentStatus === 'visible'): ?>
         <section class="moment-comments" id="momentComments">
             <h2 class="moment-comments-title">
                 <i class="fa-regular fa-comments"></i> Comments <span id="momentCommentCount">(<?php echo $momentCommentCount; ?>)</span>
