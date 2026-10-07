@@ -35,6 +35,9 @@ if (!empty($staffAccount['profile_data']) && !empty($staffAccount['profile_mime'
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <link rel="stylesheet" href="<?php echo BASE_URL; ?>/assets/css/admin.css?v=<?php echo file_exists(__DIR__ . '/../assets/css/admin.css') ? filemtime(__DIR__ . '/../assets/css/admin.css') : time(); ?>" />
     <link rel="stylesheet" href="<?php echo BASE_URL; ?>/assets/css/staff.css?v=<?php echo file_exists(__DIR__ . '/../assets/css/staff.css') ? filemtime(__DIR__ . '/../assets/css/staff.css') : time(); ?>" />
+    <?php foreach (($staffExtraCss ?? []) as $staffExtraCssHref): ?>
+    <link rel="stylesheet" href="<?php echo htmlspecialchars($staffExtraCssHref); ?>" />
+    <?php endforeach; ?>
 </head>
 <body class="admin-body staff-body">
     <div class="admin-app">

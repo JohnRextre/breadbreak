@@ -54,7 +54,7 @@ $orderSql = match ($sortBy) {
 $reviewStmt = $pdo->prepare(
     "SELECT r.id, r.food_rating, r.shop_service_rating, r.delivery_speed_rating,
             r.driver_service_rating, r.food_topics, r.service_story, r.traits, r.created_at,
-            o.reference_id, o.status AS order_status,
+            o.reference_id, o.status AS order_status, o.fulfillment_type,
             u.first_name, u.last_name
      FROM order_reviews r
      JOIN orders o ON o.id = r.order_id
@@ -252,8 +252,10 @@ require __DIR__ . '/../includes/admin_header.php';
 
                 <div class="rv-ratings">
                     <div><span>Shop Service</span><?php echo rvStars($review['shop_service_rating'] ? (int) $review['shop_service_rating'] : null); ?></div>
-                    <div><span>Delivery Speed</span><?php echo rvStars($review['delivery_speed_rating'] ? (int) $review['delivery_speed_rating'] : null); ?></div>
-                    <div><span>Driver Service</span><?php echo rvStars($review['driver_service_rating'] ? (int) $review['driver_service_rating'] : null); ?></div>
+                    <?php if (($review['fulfillment_type'] ?? 'delivery') !== 'pickup'): ?>
+                        <div><span>Delivery Speed</span><?php echo rvStars($review['delivery_speed_rating'] ? (int) $review['delivery_speed_rating'] : null); ?></div>
+                        <div><span>Driver Service</span><?php echo rvStars($review['driver_service_rating'] ? (int) $review['driver_service_rating'] : null); ?></div>
+                    <?php endif; ?>
                 </div>
 
                 <?php if ($filledTopics): ?>

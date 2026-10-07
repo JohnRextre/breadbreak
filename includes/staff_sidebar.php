@@ -3,6 +3,7 @@ $staffNavigation = [
     'main' => [
         ['dashboard', 'Dashboard', 'grid'],
         ['inventory', 'Inventory', 'box'],
+        ['inventory-history', 'Inventory History', 'invhistory'],
         ['orders', 'Orders', 'clipboard'],
         ['order-history', 'Order History', 'history'],
         ['reports', 'Reports & Analytics', 'chart'],
@@ -11,17 +12,20 @@ $staffNavigation = [
     ],
     'account' => [
         ['profile', 'My Account', 'profile'],
+        ['activity', 'Activity History', 'activity'],
     ],
 ];
 $staffIcons = [
     'grid' => '<i class="fa-solid fa-table-cells-large"></i>',
     'box' => '<i class="fa-solid fa-boxes-stacked"></i>',
+    'invhistory' => '<i class="fa-solid fa-box-open"></i>',
     'clipboard' => '<i class="fa-solid fa-receipt"></i>',
     'history' => '<i class="fa-solid fa-clock-rotate-left"></i>',
     'chart' => '<i class="fa-solid fa-chart-line"></i>',
     'moments' => '<i class="fa-solid fa-bullhorn"></i>',
     'shop' => '<i class="fa-solid fa-shop"></i>',
     'profile' => '<i class="fa-solid fa-circle-user"></i>',
+    'activity' => '<i class="fa-solid fa-user-clock"></i>',
     'logout' => '<i class="fa-solid fa-right-from-bracket"></i>',
 ];
 ?>

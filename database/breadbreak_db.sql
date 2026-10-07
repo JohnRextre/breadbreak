@@ -187,7 +187,6 @@ CREATE TABLE IF NOT EXISTS delivery_settings (
 -- branch_lat/lng       = branch GPS coordinates (full mode)
 -- branch_name          = display name of branch
 -- max_drive_time_min   = drive time threshold for traffic warning
--- geoapify_api_key     = optional Geoapify key (full mode)
 
 -- =============================================================================
 -- Delivery Geocode Cache  (24-hour TTL, respects Nominatim rate limit)

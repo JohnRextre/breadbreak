@@ -104,7 +104,7 @@ function orderPaymentOptions(PDO $pdo): array
 
 /**
  * The one action staff should take next, if any. Everything else is automatic.
- * Returns ['kind' => 'accept'|'rider'|'ontheway'|'await'|'none', 'label', 'icon', 'hint'].
+ * Returns ['kind' => 'accept'|'ready'|'rider'|'ontheway'|'complete'|'await'|'none', 'label', 'icon', 'hint'].
  */
 function orderNextAction(array $o, array $riders): array
 {
@@ -123,6 +123,10 @@ function orderNextAction(array $o, array $riders): array
         return ['kind' => 'none', 'label' => 'With rider', 'icon' => 'motorcycle', 'hint' => 'Rider closes this out with a photo.'];
     }
     if ($status === 'ready_for_pickup') {
+        if ($isPickup) {
+            // Pickup has no rider to close it out — the staff confirms the handover.
+            return ['kind' => 'complete', 'label' => 'Mark picked up', 'icon' => 'circle-check', 'hint' => 'Customer collected the order — close it out.'];
+        }
         return ['kind' => 'await', 'label' => 'Awaiting pickup', 'icon' => 'hourglass', 'hint' => 'Customer will collect this order.'];
     }
     if ($status === 'pending') {
@@ -137,7 +141,8 @@ function orderNextAction(array $o, array $riders): array
 
     // status === processing
     if ($isPickup) {
-        return ['kind' => 'rider', 'label' => 'Mark ready', 'icon' => 'store', 'hint' => 'Let the customer know it is ready to collect.'];
+        // Pickup never touches the rider flow: ready_for_pickup, not out_for_delivery.
+        return ['kind' => 'ready', 'label' => 'Mark as Ready', 'icon' => 'store', 'hint' => 'Let the customer know it is ready to collect.'];
     }
     if (empty($o['rider_id'])) {
         return [

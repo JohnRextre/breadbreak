@@ -48,7 +48,6 @@ $areasJson     = getSetting($pdo, 'in_range_areas', '[]');
 $branchLat     = (float) getSetting($pdo, 'branch_lat', '14.8310');
 $branchLng     = (float) getSetting($pdo, 'branch_lng', '120.8720');
 $maxDriveTime  = (int)   getSetting($pdo, 'max_drive_time_min', '25');
-$geoapifyKey   = getSetting($pdo, 'geoapify_api_key', '');
 
 $zones    = json_decode($zonesJson, true)  ?: [];
 $inAreas  = json_decode($areasJson, true)  ?: [];

@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/auth.php';
 requireRole('staff');
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/inventory_log.php';
 
 $pdo = getDatabaseConnection();
 
@@ -90,6 +91,7 @@ $modal = '';
 $formData = [];
 $selectedItem = null;
 $selectedVariants = [];
+$changeNotes = [];
 $categoryId = (int) ($_POST['category_id'] ?? 0);
 
 function inventoryStockStatus(int $quantity): array { return $quantity > 10 ? ['In Stock', 'stock-in'] : ($quantity > 0 ? ['Low Stock', 'stock-low'] : ['Out of Stock', 'stock-out']); }
@@ -157,6 +159,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors['menu_photo'] = $photoException->getMessage();
         }
         if (!$errors) {
+            $previousMenuName = null;
+            if ($action === 'edit_menu') {
+                $previousMenuStatement = $pdo->prepare('SELECT name FROM menu_categories WHERE id = :id LIMIT 1');
+                $previousMenuStatement->execute(['id' => $categoryId]);
+                $previousMenuName = (string) ($previousMenuStatement->fetchColumn() ?: '');
+            }
             $check = $pdo->prepare('SELECT id FROM menu_categories WHERE name = :name AND id <> :id LIMIT 1');
             $check->execute(['name' => $name, 'id' => $categoryId]);
             if ($check->fetch()) $errors['menu_name'] = 'This menu category already exists.';
@@ -177,6 +185,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $insertSize = $pdo->prepare('INSERT IGNORE INTO category_service_sizes (category_id, size_name) VALUES (:category_id, :size_name)');
                     foreach ($defaultNewSizes as $sName) $insertSize->execute(['category_id' => $newCatId, 'size_name' => $sName]);
                 }
+                $menuLogDetail = null;
+                if ($action === 'create_menu') {
+                    $menuLogDetail = $categoryPhoto ? 'Cover photo included' : null;
+                } else {
+                    $menuNotes = [];
+                    if ($previousMenuName !== null && $previousMenuName !== '' && $previousMenuName !== $name) $menuNotes[] = sprintf('Renamed "%s" to "%s"', $previousMenuName, $name);
+                    if ($categoryPhoto) $menuNotes[] = 'Cover photo updated';
+                    $menuLogDetail = $menuNotes ? implode('; ', $menuNotes) : null;
+                }
+                logInventoryActivity($pdo, $action === 'create_menu' ? 'menu_created' : 'menu_updated', 'menu', $newCatId ?: $categoryId, $name, $menuLogDetail);
                 inventoryRedirect($action === 'create_menu' ? 'Menu category added successfully.' : 'Menu category updated successfully.');
             }
         }
@@ -189,9 +207,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($sizeName === '') {
             $errors['size_name'] = 'Service size / variant name is required.';
         } else {
-            $catCheck = $pdo->prepare('SELECT id FROM menu_categories WHERE id = :id LIMIT 1');
+            $catCheck = $pdo->prepare('SELECT id, name FROM menu_categories WHERE id = :id LIMIT 1');
             $catCheck->execute(['id' => $categoryId]);
-            if (!$catCheck->fetch()) {
+            $sizeCategory = $catCheck->fetch();
+            if (!$sizeCategory) {
                 $errors['size_name'] = 'Selected category does not exist.';
             } else {
                 $check = $pdo->prepare('SELECT id FROM category_service_sizes WHERE category_id = :category_id AND LOWER(TRIM(size_name)) = LOWER(TRIM(:size_name)) LIMIT 1');
@@ -201,12 +220,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } else {
                     $stmt = $pdo->prepare('INSERT INTO category_service_sizes (category_id, size_name) VALUES (:category_id, :size_name)');
                     $stmt->execute(['category_id' => $categoryId, 'size_name' => $sizeName]);
+                    logInventoryActivity($pdo, 'size_added', 'menu', $categoryId, $sizeName, sprintf('Added to the "%s" menu', $sizeCategory['name']));
                     inventoryRedirect('Service size variant added to menu category successfully.');
                 }
             }
         }
     } elseif ($action === 'delete_menu') {
-        $count = $pdo->prepare('SELECT COUNT(*) FROM inventory_items WHERE category_id = :id'); $count->execute(['id' => $categoryId]); if ((int) $count->fetchColumn() > 0) { $errors['menu_delete'] = 'This menu contains inventory items. Please move or remove the items from this category before deleting the menu.'; $modal = 'delete-menu-modal'; } else { $delete = $pdo->prepare('DELETE FROM menu_categories WHERE id = :id'); $delete->execute(['id' => $categoryId]); inventoryRedirect('Menu category deleted successfully.'); }
+        $deletedMenuStatement = $pdo->prepare('SELECT name FROM menu_categories WHERE id = :id LIMIT 1');
+        $deletedMenuStatement->execute(['id' => $categoryId]);
+        $deletedMenuName = (string) ($deletedMenuStatement->fetchColumn() ?: '');
+        $count = $pdo->prepare('SELECT COUNT(*) FROM inventory_items WHERE category_id = :id'); $count->execute(['id' => $categoryId]); if ((int) $count->fetchColumn() > 0) { $errors['menu_delete'] = 'This menu contains inventory items. Please move or remove the items from this category before deleting the menu.'; $modal = 'delete-menu-modal'; } else { $delete = $pdo->prepare('DELETE FROM menu_categories WHERE id = :id'); $delete->execute(['id' => $categoryId]); logInventoryActivity($pdo, 'menu_deleted', 'menu', $categoryId, $deletedMenuName !== '' ? $deletedMenuName : 'Menu category', null); inventoryRedirect('Menu category deleted successfully.'); }
     } elseif ($action === 'create_item' || $action === 'edit_item') {
         $formData = ['name' => trim($_POST['name'] ?? ''), 'category_id' => (int) ($_POST['category_id'] ?? 0), 'description' => trim($_POST['description'] ?? ''), 'photo' => '', 'variants' => variantInputRows($_POST)]; $categoryId = $formData['category_id']; $modal = $action === 'create_item' ? 'add-item-modal' : 'edit-item-modal'; $itemId = (int) ($_POST['item_id'] ?? 0);
         if ($formData['name'] === '') $errors['item_name'] = 'Item name is required.';
@@ -226,19 +249,97 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $itemChanged = $existingItem['name'] !== $formData['name'] || (int) $existingItem['category_id'] !== $formData['category_id'] || $existingItem['description'] !== $formData['description'];
             $photoChanged = !empty($_FILES['photo']['name']) && ($_FILES['photo']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE;
             if (!$itemChanged && !$photoChanged && $normalizeVariants($existingVariants) === $normalizeVariants($formData['variants'])) inventoryRedirect('No changes were made.');
+            // Snapshot what actually changed — this feeds the Inventory History audit.
+            if ($existingItem['name'] !== $formData['name']) $changeNotes[] = sprintf('Renamed "%s" to "%s"', $existingItem['name'], $formData['name']);
+            if ((int) $existingItem['category_id'] !== (int) $formData['category_id']) $changeNotes[] = sprintf('Moved from "%s" to "%s"', $categoryNameMap[(int) $existingItem['category_id']] ?? 'Unknown menu', $categoryNameMap[(int) $formData['category_id']] ?? 'Unknown menu');
+            if ($existingItem['description'] !== $formData['description']) $changeNotes[] = 'Description updated';
+            if ($photoChanged) $changeNotes[] = 'Photo updated';
+            $existingVariantMap = [];
+            foreach ($existingVariants as $existingVariant) $existingVariantMap[$existingVariant['service_size']] = $existingVariant;
+            $newVariantMap = [];
+            foreach ($formData['variants'] as $newVariant) $newVariantMap[$newVariant['service_size']] = $newVariant;
+            foreach ($newVariantMap as $variantSize => $newVariant) {
+                if (!isset($existingVariantMap[$variantSize])) {
+                    $changeNotes[] = sprintf('Added %s (%s)', $variantSize, $newVariant['sku']);
+                    continue;
+                }
+                $oldVariant = $existingVariantMap[$variantSize];
+                if ((float) $oldVariant['price'] !== (float) $newVariant['price']) $changeNotes[] = sprintf('%s price ₱%s → ₱%s', $variantSize, number_format((float) $oldVariant['price'], 2), number_format((float) $newVariant['price'], 2));
+                if ((int) $oldVariant['quantity'] !== (int) $newVariant['quantity']) $changeNotes[] = sprintf('%s stock %d → %d', $variantSize, (int) $oldVariant['quantity'], (int) $newVariant['quantity']);
+                $oldAvailability = $oldVariant['availability'] === 'unavailable' ? 'unavailable' : 'available';
+                if ($oldAvailability !== $newVariant['availability']) $changeNotes[] = sprintf('%s marked %s', $variantSize, $newVariant['availability']);
+            }
+            foreach ($existingVariantMap as $variantSize => $oldVariant) {
+                if (!isset($newVariantMap[$variantSize])) $changeNotes[] = sprintf('Removed %s (%s)', $variantSize, $oldVariant['sku']);
+            }
+            // Sizes the form dropped: past orders pin their variant rows
+            // (order_items.variant_id is RESTRICT), so removing those would blow up
+            // mid-transaction. Block it up front with a message staff can act on.
+            $removedVariantSizes = array_values(array_diff(array_keys($existingVariantMap), array_keys($newVariantMap)));
+            if ($removedVariantSizes) {
+                $sizePlaceholders = implode(',', array_fill(0, count($removedVariantSizes), '?'));
+                $referencedStatement = $pdo->prepare(
+                    "SELECT DISTINCT v.service_size FROM inventory_item_variants v
+                      JOIN order_items oi ON oi.variant_id = v.id
+                     WHERE v.inventory_item_id = ? AND v.service_size IN ($sizePlaceholders)"
+                );
+                $referencedStatement->execute([$itemId, ...$removedVariantSizes]);
+                $referencedSizes = $referencedStatement->fetchAll(PDO::FETCH_COLUMN);
+                if ($referencedSizes) {
+                    $errors['item'] = 'Cannot remove the '
+                        . implode(', ', array_map(fn (string $size) => '"' . $size . '"', $referencedSizes))
+                        . ' size — past orders include it. Keep the size in the form and set it to Unavailable instead.';
+                }
+            }
         }
         if (!$errors) {
             try { $pdo->beginTransaction();
                 if ($action === 'create_item') { $statement = $pdo->prepare('INSERT INTO inventory_items (name, category_id, description) VALUES (:name, :category_id, :description)'); $statement->execute(['name' => $formData['name'], 'category_id' => $formData['category_id'], 'description' => $formData['description']]); $itemId = (int) $pdo->lastInsertId(); }
-                else { $statement = $pdo->prepare('UPDATE inventory_items SET name = :name, category_id = :category_id, description = :description WHERE id = :id'); $statement->execute(['name' => $formData['name'], 'category_id' => $formData['category_id'], 'description' => $formData['description'], 'id' => $itemId]); $pdo->prepare('DELETE FROM inventory_item_variants WHERE inventory_item_id = :id')->execute(['id' => $itemId]); }
+                else { $statement = $pdo->prepare('UPDATE inventory_items SET name = :name, category_id = :category_id, description = :description WHERE id = :id'); $statement->execute(['name' => $formData['name'], 'category_id' => $formData['category_id'], 'description' => $formData['description'], 'id' => $itemId]); }
                 $photo = saveInventoryPhoto($itemId); if ($photo) $pdo->prepare('UPDATE inventory_items SET photo = NULL, photo_data = :photo_data, photo_mime = :photo_mime WHERE id = :id')->execute(['photo_data' => $photo['data'], 'photo_mime' => $photo['mime'], 'id' => $itemId]);
-                $variantStatement = $pdo->prepare('INSERT INTO inventory_item_variants (inventory_item_id, service_size, sku, price, quantity, availability) VALUES (:item_id, :service_size, :sku, :price, :quantity, :availability)'); foreach ($formData['variants'] as $variant) $variantStatement->execute(['item_id' => $itemId, 'service_size' => $variant['service_size'], 'sku' => $variant['sku'], 'price' => $variant['price'], 'quantity' => $variant['quantity'], 'availability' => $variant['availability']]); $pdo->commit(); inventoryRedirect($action === 'create_item' ? 'Inventory item added successfully.' : 'Inventory item updated successfully.');
-            } catch (Throwable $exception) { if ($pdo->inTransaction()) $pdo->rollBack(); $errors['item'] = $exception->getMessage() ?: 'Unable to save the inventory item.'; }
+                $variantInsert = $pdo->prepare('INSERT INTO inventory_item_variants (inventory_item_id, service_size, sku, price, quantity, availability) VALUES (:item_id, :service_size, :sku, :price, :quantity, :availability)');
+                if ($action === 'create_item') {
+                    foreach ($formData['variants'] as $variant) $variantInsert->execute(['item_id' => $itemId, 'service_size' => $variant['service_size'], 'sku' => $variant['sku'], 'price' => $variant['price'], 'quantity' => $variant['quantity'], 'availability' => $variant['availability']]);
+                } else {
+                    // Update variants IN PLACE — order_items.variant_id is RESTRICT, so
+                    // a delete+reinsert would change the ids and break on any item that
+                    // was ever ordered. Matching happens on service_size (unique per item).
+                    $existingVariantStatement = $pdo->prepare('SELECT id, service_size FROM inventory_item_variants WHERE inventory_item_id = :id');
+                    $existingVariantStatement->execute(['id' => $itemId]);
+                    $existingVariantIds = [];
+                    foreach ($existingVariantStatement->fetchAll() as $existingVariantRow) $existingVariantIds[(string) $existingVariantRow['service_size']] = (int) $existingVariantRow['id'];
+                    $variantUpdate = $pdo->prepare('UPDATE inventory_item_variants SET sku = :sku, price = :price, quantity = :quantity, availability = :availability WHERE id = :id');
+                    $keptSizes = [];
+                    foreach ($formData['variants'] as $variant) {
+                        $keptSizes[] = $variant['service_size'];
+                        if (isset($existingVariantIds[$variant['service_size']])) {
+                            $variantUpdate->execute(['sku' => $variant['sku'], 'price' => $variant['price'], 'quantity' => $variant['quantity'], 'availability' => $variant['availability'], 'id' => $existingVariantIds[$variant['service_size']]]);
+                        } else {
+                            $variantInsert->execute(['item_id' => $itemId, 'service_size' => $variant['service_size'], 'sku' => $variant['sku'], 'price' => $variant['price'], 'quantity' => $variant['quantity'], 'availability' => $variant['availability']]);
+                        }
+                    }
+                    // Sizes the form dropped are deleted here; referenced ones were
+                    // already rejected in validation above, so no FK violation is possible.
+                    $droppedSizes = array_values(array_diff(array_keys($existingVariantIds), $keptSizes));
+                    if ($droppedSizes) {
+                        $dropPlaceholders = implode(',', array_fill(0, count($droppedSizes), '?'));
+                        $pdo->prepare("DELETE FROM inventory_item_variants WHERE inventory_item_id = ? AND service_size IN ($dropPlaceholders)")->execute([$itemId, ...$droppedSizes]);
+                    }
+                }
+                $pdo->commit();
+                if ($action === 'create_item') {
+                    $variantTally = count($formData['variants']);
+                    logInventoryActivity($pdo, 'item_created', 'item', $itemId, $formData['name'], sprintf('%s · %d variant%s', $categoryNameMap[(int) $formData['category_id']] ?? 'Menu', $variantTally, $variantTally === 1 ? '' : 's'));
+                } else {
+                    logInventoryActivity($pdo, 'item_updated', 'item', $itemId, $formData['name'], $changeNotes ? implode('; ', $changeNotes) : 'Variant details updated');
+                }
+                inventoryRedirect($action === 'create_item' ? 'Inventory item added successfully.' : 'Inventory item updated successfully.');
+            } catch (Throwable $exception) { if ($pdo->inTransaction()) $pdo->rollBack(); error_log('Inventory item save failed: ' . $exception->getMessage()); $errors['item'] = 'Unable to save the inventory item. Please try again.'; }
         }
     } elseif ($action === 'delete_quantity') {
         $variantId = (int) ($_POST['variant_id'] ?? 0);
         $deleteQuantity = filter_var($_POST['delete_quantity'] ?? null, FILTER_VALIDATE_INT);
-        $quantityStatement = $pdo->prepare('SELECT quantity FROM inventory_item_variants WHERE id = :variant_id AND inventory_item_id = :item_id LIMIT 1');
+        $quantityStatement = $pdo->prepare('SELECT v.quantity, v.service_size, v.sku, i.name AS item_name FROM inventory_item_variants v JOIN inventory_items i ON i.id = v.inventory_item_id WHERE v.id = :variant_id AND v.inventory_item_id = :item_id LIMIT 1');
         $quantityStatement->execute(['variant_id' => $variantId, 'item_id' => $itemId]);
         $variant = $quantityStatement->fetch();
         if (!$variant || $deleteQuantity === false || $deleteQuantity < 1 || $deleteQuantity > (int) $variant['quantity']) {
@@ -247,6 +348,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $update = $pdo->prepare('UPDATE inventory_item_variants SET quantity = quantity - :quantity WHERE id = :variant_id AND inventory_item_id = :item_id');
             $update->execute(['quantity' => $deleteQuantity, 'variant_id' => $variantId, 'item_id' => $itemId]);
+            logInventoryActivity(
+                $pdo,
+                'stock_reduced',
+                'item',
+                $itemId,
+                (string) ($variant['item_name'] ?: 'Inventory item'),
+                sprintf('%s (%s): %d → %d pcs (−%d)', $variant['service_size'], $variant['sku'], (int) $variant['quantity'], (int) $variant['quantity'] - $deleteQuantity, $deleteQuantity)
+            );
             inventoryRedirect('Quantity updated successfully.');
         }
     } elseif ($action === 'delete_item') {
@@ -254,7 +363,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors['item'] = "Type 'Delete' exactly to confirm permanent deletion.";
             $modal = 'delete-modal';
         } else {
-            try { $pdo->beginTransaction(); $pdo->prepare('DELETE FROM inventory_item_variants WHERE inventory_item_id = :id')->execute(['id' => $itemId]); $pdo->prepare('DELETE FROM inventory_items WHERE id = :id')->execute(['id' => $itemId]); $pdo->commit(); inventoryRedirect('Inventory item deleted successfully.'); } catch (Throwable $exception) { if ($pdo->inTransaction()) $pdo->rollBack(); $errors['item'] = 'Unable to delete the inventory item.'; }
+            // Same FK wall as edit: deleting the item cascades to its variants, and
+            // any variant an order references will reject the delete. Warn instead
+            // of surfacing a raw SQL error.
+            $soldReferenceStatement = $pdo->prepare('SELECT COUNT(*) FROM order_items oi JOIN inventory_item_variants v ON v.id = oi.variant_id WHERE v.inventory_item_id = :id');
+            $soldReferenceStatement->execute(['id' => $itemId]);
+            if ((int) $soldReferenceStatement->fetchColumn() > 0) {
+                $errors['item'] = 'This item cannot be deleted because past orders include it. Set its sizes to Unavailable instead.';
+                $modal = 'delete-modal';
+            } else {
+                try {
+                    $deletedItemStatement = $pdo->prepare('SELECT name FROM inventory_items WHERE id = :id LIMIT 1');
+                    $deletedItemStatement->execute(['id' => $itemId]);
+                    $deletedItemName = (string) ($deletedItemStatement->fetchColumn() ?: '');
+                    $deletedVariantStatement = $pdo->prepare('SELECT COUNT(*) FROM inventory_item_variants WHERE inventory_item_id = :id');
+                    $deletedVariantStatement->execute(['id' => $itemId]);
+                    $deletedVariantCount = (int) $deletedVariantStatement->fetchColumn();
+                    $pdo->beginTransaction();
+                    $pdo->prepare('DELETE FROM inventory_item_variants WHERE inventory_item_id = :id')->execute(['id' => $itemId]);
+                    $pdo->prepare('DELETE FROM inventory_items WHERE id = :id')->execute(['id' => $itemId]);
+                    $pdo->commit();
+                    logInventoryActivity($pdo, 'item_deleted', 'item', $itemId, $deletedItemName !== '' ? $deletedItemName : 'Inventory item', sprintf('%d variant%s removed', $deletedVariantCount, $deletedVariantCount === 1 ? '' : 's'));
+                    inventoryRedirect('Inventory item deleted successfully.');
+                } catch (Throwable $exception) { if ($pdo->inTransaction()) $pdo->rollBack(); error_log('Inventory item delete failed: ' . $exception->getMessage()); $errors['item'] = 'Unable to delete the inventory item.'; }
+            }
         }
     }
 }
@@ -281,7 +413,12 @@ require __DIR__ . '/../includes/staff_header.php';
         <h2>Inventory</h2>
         <p>Manage BreadBreak products, menu categories, and stock.</p>
     </div>
-    <button class="admin-button primary" type="button" data-open-staff-modal="add-item-modal"><i class="fa-solid fa-plus"></i> Add Item</button>
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <a class="admin-button secondary" href="<?php echo BASE_URL; ?>/staff/inventory-history.php" style="height:44px; padding:0 20px; border-radius:999px; font-weight:800; display:inline-flex; align-items:center; gap:7px;">
+            <i class="fa-solid fa-clock-rotate-left"></i> History
+        </a>
+        <button class="admin-button primary" type="button" data-open-staff-modal="add-item-modal"><i class="fa-solid fa-plus"></i> Add Item</button>
+    </div>
 </section>
 <?php if ($successMessage): ?><div class="admin-notice success" role="status"><?php echo htmlspecialchars($successMessage); ?></div><?php endif; ?><?php if (!empty($errors['menu_delete'])): ?><div class="admin-notice danger" role="alert"><?php echo htmlspecialchars($errors['menu_delete']); ?></div><?php endif; ?><?php if (!empty($errors['item'])): ?><div class="admin-notice danger" role="alert"><?php echo htmlspecialchars($errors['item']); ?></div><?php endif; ?>
 

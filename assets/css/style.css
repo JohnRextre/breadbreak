@@ -1019,6 +1019,33 @@ p {
 .account-panel-heading { padding-bottom: 1.2rem; border-bottom: 1px solid var(--border); }
 .account-panel-heading h2 { margin-bottom: .35rem; font-size: 1.5rem; }
 .account-panel-heading p { margin: 0; font-size: .85rem; }
+.account-activity-day { display: flex; align-items: center; gap: .7rem; margin: 1.1rem 0 .55rem; }
+.account-activity-day:first-of-type { margin-top: .4rem; }
+.account-activity-day span { color: var(--muted); font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+.account-activity-day::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.account-activity-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
+.account-activity-item { display: flex; align-items: flex-start; gap: .75rem; padding: .75rem .85rem; border: 1px solid var(--border); border-radius: 12px; background: #fff; }
+.account-activity-icon { width: 34px; height: 34px; flex: 0 0 auto; border-radius: 10px; display: grid; place-items: center; background: #f4efe9; color: var(--brown-700); font-size: .8rem; }
+.account-activity-item.tone-accent .account-activity-icon { background: rgba(201, 121, 64, .14); color: var(--accent); }
+.account-activity-item.tone-ok .account-activity-icon { background: rgba(47, 158, 99, .14); color: #2f9e63; }
+.account-activity-body { flex: 1 1 auto; min-width: 0; }
+.account-activity-body strong { display: block; font-size: .85rem; font-weight: 700; color: var(--brown-900); }
+.account-activity-body p { margin: .15rem 0 0; color: var(--muted); font-size: .75rem; line-height: 1.45; word-break: break-word; }
+.account-activity-item time { flex: 0 0 auto; color: var(--muted); font-size: .72rem; font-weight: 600; white-space: nowrap; }
+.account-activity-empty { display: flex; flex-direction: column; align-items: center; gap: .55rem; margin-top: 1.1rem; padding: 2.2rem 1rem; border: 1px dashed var(--border); border-radius: 12px; background: #faf7f4; text-align: center; }
+.account-activity-empty i { font-size: 1.3rem; color: var(--accent); }
+.account-activity-empty p { margin: 0; max-width: 42ch; color: var(--muted); font-size: .8rem; line-height: 1.5; }
+.account-activity-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .55rem; margin-top: 1.1rem; }
+.account-activity-search { position: relative; display: flex; align-items: center; flex: 1 1 200px; min-width: 160px; }
+.account-activity-search i { position: absolute; left: .8rem; color: var(--muted); font-size: .76rem; pointer-events: none; }
+.account-activity-search input { width: 100%; min-height: 38px; padding: .55rem .8rem .55rem 2.1rem; border: 1px solid #ded6d0; border-radius: 999px; background: #fff; color: var(--brown-900); font: inherit; font-size: .82rem; }
+.account-activity-search input:focus { outline: none; border-color: rgba(201, 121, 64, .55); box-shadow: 0 0 0 3px rgba(201, 121, 64, .12); }
+.account-activity-sort { display: inline-flex; align-items: center; gap: .4rem; color: var(--muted); font-size: .74rem; font-weight: 700; }
+.account-activity-sort select { padding: .55rem .65rem; border: 1px solid #ded6d0; border-radius: 8px; background: #fff; color: var(--brown-900); font: inherit; font-size: .8rem; cursor: pointer; }
+.account-activity-sort select:focus { outline: none; border-color: rgba(201, 121, 64, .55); }
+.account-activity-search-btn { display: inline-flex; align-items: center; gap: .4rem; padding: .58rem .95rem; border: 0; border-radius: 999px; background: var(--brown-900); color: #fff; font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer; }
+.account-activity-search-btn:hover { background: var(--accent); }
+.account-activity-count { color: var(--muted); font-size: .74rem; font-weight: 700; white-space: nowrap; }
 .account-form input:not([type="checkbox"]):not([type="radio"]) { width: 100%; min-height: 43px; padding: .7rem .8rem; border: 1px solid #ded6d0; border-radius: 8px; color: var(--brown-900); background: #fff; font: inherit; font-size: .85rem; }
 .account-form input[type="checkbox"],
 .account-form input[type="radio"] { width: 18px !important; height: 18px !important; min-height: 18px !important; max-height: 18px !important; margin: 0 !important; padding: 0 !important; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; display: inline-block; }

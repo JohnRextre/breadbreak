@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/auth.php';
 requireRole('customer');
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../includes/moments.php'; // status labels + moderation helpers for My Posts
+require_once __DIR__ . '/../includes/activity_log.php'; // sign-in/out + account-change audit for the Activities panel
 
 $pdo = getDatabaseConnection();
 $customerId = (int) ($_SESSION['user_id'] ?? 0);
@@ -15,7 +16,7 @@ if (!$profileColumn) $pdo->exec("ALTER TABLE users ADD COLUMN profile_data MEDIU
 $pdo->exec("CREATE TABLE IF NOT EXISTS customer_discount_ids (id INT PRIMARY KEY AUTO_INCREMENT, customer_id INT NOT NULL, id_type ENUM('senior','pwd') NOT NULL DEFAULT 'senior', id_number VARCHAR(100) NOT NULL, full_name VARCHAR(150) NOT NULL, is_default TINYINT(1) NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, UNIQUE KEY uq_customer_disc (customer_id, id_number), KEY idx_disc_customer (customer_id), CONSTRAINT fk_disc_customer FOREIGN KEY (customer_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 $pdo->exec("CREATE TABLE IF NOT EXISTS customer_favorites (customer_id INT NOT NULL, inventory_item_id INT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (customer_id, inventory_item_id), CONSTRAINT fk_fav_customer FOREIGN KEY (customer_id) REFERENCES users(id) ON DELETE CASCADE, CONSTRAINT fk_fav_item FOREIGN KEY (inventory_item_id) REFERENCES inventory_items(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
-$accountStatement = $pdo->prepare('SELECT first_name, last_name, phone, email, profile_data, profile_mime FROM users WHERE id = :id LIMIT 1');
+$accountStatement = $pdo->prepare('SELECT first_name, last_name, phone, email, profile_data, profile_mime, created_at FROM users WHERE id = :id LIMIT 1');
 $accountStatement->execute(['id' => $customerId]);
 $account = $accountStatement->fetch() ?: [];
 
@@ -27,6 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
     $photoAction = $_POST['photo_action'] ?? 'upload';
     if ($photoAction === 'remove') {
         $pdo->prepare('UPDATE users SET profile_data = NULL, profile_mime = NULL WHERE id = :id')->execute(['id' => $customerId]);
+        logUserActivity($pdo, $customerId, 'photo_removed', 'Removed the profile photo');
         $profileSuccess = 'Profile photo removed.';
     } elseif (empty($_FILES['profile_photo']['name']) || $_FILES['profile_photo']['error'] !== UPLOAD_ERR_OK) {
         $profileError = 'Please choose a profile photo to upload.';
@@ -37,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
         else {
             $photoData = file_get_contents($_FILES['profile_photo']['tmp_name']);
             if ($photoData === false) $profileError = 'Unable to read the profile photo.';
-            else { $pdo->prepare('UPDATE users SET profile_data = :profile_data, profile_mime = :profile_mime WHERE id = :id')->execute(['profile_data' => $photoData, 'profile_mime' => $mime, 'id' => $customerId]); $profileSuccess = 'Profile photo updated successfully.'; }
+            else { $pdo->prepare('UPDATE users SET profile_data = :profile_data, profile_mime = :profile_mime WHERE id = :id')->execute(['profile_data' => $photoData, 'profile_mime' => $mime, 'id' => $customerId]); logUserActivity($pdo, $customerId, 'photo_updated', 'Uploaded a new profile photo'); $profileSuccess = 'Profile photo updated successfully.'; }
         }
     }
     $accountStatement->execute(['id' => $customerId]);
@@ -74,6 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'chang
     elseif ($newPassword === $currentPassword) $passwordError = 'New password must be different from your current password.';
     else {
         $pdo->prepare('UPDATE users SET password = :password WHERE id = :id')->execute(['password' => password_hash($newPassword, PASSWORD_DEFAULT), 'id' => $customerId]);
+        logUserActivity($pdo, $customerId, 'password_changed', 'Changed the account password');
         $passwordSuccess = 'Password changed successfully.';
     }
 }
@@ -86,7 +89,52 @@ $MAX_ADDRESSES  = 5;
 
 // Count existing addresses
 $addrCount = (int) $pdo->prepare('SELECT COUNT(*) FROM customer_addresses WHERE customer_id = :cid')->execute(['cid' => $customerId]) ? $pdo->query("SELECT COUNT(*) FROM customer_addresses WHERE customer_id = $customerId")->fetchColumn() : 0;
-// Recount properly
+
+// ── Delivery-zone helpers (address save must agree with checkout) ────────────
+function deliverySettingValue(PDO $pdo, string $key, string $default = ''): string
+{
+    $s = $pdo->prepare('SELECT setting_value FROM delivery_settings WHERE setting_key = :k LIMIT 1');
+    $s->execute(['k' => $key]);
+    return (string) ($s->fetchColumn() ?: $default);
+}
+
+/** Widest delivery zone radius (max_km across all zones), 8.0 as fallback. */
+function accountMaxZoneKm(PDO $pdo): float
+{
+    $zones = json_decode(deliverySettingValue($pdo, 'delivery_zones', '[]'), true) ?: [];
+    $maxKm = 0.0;
+    foreach ($zones as $z) {
+        $maxKm = max($maxKm, (float) ($z['max_km'] ?? 0));
+    }
+    return $maxKm > 0 ? $maxKm : 8.0;
+}
+
+/** Straight-line distance — the same measure the map picker and checkout pin use. */
+function accountHaversineKm(float $lat1, float $lng1, float $lat2, float $lng2): float
+{
+    $r = 6371.0;
+    $dLat = deg2rad($lat2 - $lat1);
+    $dLng = deg2rad($lng2 - $lng1);
+    $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+    return $r * 2 * atan2(sqrt($a), sqrt(1 - $a));
+}
+
+// Branch position + delivery radius used by the map picker. Read from settings
+// so the map badge, the JS zone check and the server-side check all measure
+// from the same point — the map previously used hardcoded coordinates sitting
+// ~250m away from the branch the rest of the app uses.
+$mapBranchLat = 14.830905;
+$mapBranchLng = 120.869675;
+$mapMaxZoneKm = 8.0;
+try {
+    $mapBranchLat = (float) deliverySettingValue($pdo, 'branch_lat', '14.830905');
+    $mapBranchLng = (float) deliverySettingValue($pdo, 'branch_lng', '120.869675');
+    $mapMaxZoneKm = accountMaxZoneKm($pdo);
+} catch (Throwable) {
+    // delivery_settings not migrated yet — keep the built-in defaults
+}
+
+// Recount properly (line 88 above is a coarse first pass)
 $cntStmt = $pdo->prepare('SELECT COUNT(*) FROM customer_addresses WHERE customer_id = :cid');
 $cntStmt->execute(['cid' => $customerId]);
 $addrCount = (int) $cntStmt->fetchColumn();
@@ -109,22 +157,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
         } elseif ($addrCount >= $MAX_ADDRESSES) {
             $addressError = "You can save up to $MAX_ADDRESSES addresses. Please remove one before adding a new one.";
         } else {
-            // Validate address is within delivery zone
-            $inRangeSetting = $pdo->prepare('SELECT setting_value FROM delivery_settings WHERE setting_key = "in_range_areas" LIMIT 1');
-            $inRangeSetting->execute();
-            $inRangeAreas = json_decode($inRangeSetting->fetchColumn() ?: '[]', true) ?: [];
+            // Zone validation — must agree with checkout.php, otherwise an address
+            // saves in one place and is rejected in the other:
+            //   pinned coords -> straight-line distance vs the widest zone
+            //   simple mode   -> keyword match against in_range_areas
+            //   full mode     -> no keyword gate (the address API does the real check)
+            $pinLatRaw = trim((string) ($_POST['addr_lat'] ?? ''));
+            $pinLngRaw = trim((string) ($_POST['addr_lng'] ?? ''));
+            $pinLat = is_numeric($pinLatRaw) ? (float) $pinLatRaw : null;
+            $pinLng = is_numeric($pinLngRaw) ? (float) $pinLngRaw : null;
+            $zoneAllowed = true;
+            $zoneError   = '';
 
-            $searchString = mb_strtolower($fullAddr . ' ' . $barangay . ' ' . $city . ' ' . $province);
-            $zoneAllowed = false;
-            foreach ($inRangeAreas as $area) {
-                if (str_contains($searchString, mb_strtolower($area))) {
-                    $zoneAllowed = true;
-                    break;
+            if ($pinLat !== null && $pinLng !== null) {
+                $pinKm = accountHaversineKm(
+                    (float) deliverySettingValue($pdo, 'branch_lat', '14.8310'),
+                    (float) deliverySettingValue($pdo, 'branch_lng', '120.8720'),
+                    $pinLat,
+                    $pinLng
+                );
+                $maxKm = accountMaxZoneKm($pdo);
+                if ($pinKm > $maxKm) {
+                    $zoneAllowed = false;
+                    $zoneError = "Sorry, this address is beyond our {$maxKm}km delivery zone and cannot be saved.";
+                }
+            } elseif (deliverySettingValue($pdo, 'delivery_mode', 'simple') === 'simple') {
+                $inRangeAreas = json_decode(deliverySettingValue($pdo, 'in_range_areas', '[]'), true) ?: [];
+                $searchString = mb_strtolower($fullAddr . ' ' . $barangay . ' ' . $city . ' ' . $province);
+                $zoneAllowed = empty($inRangeAreas);
+                foreach ($inRangeAreas as $area) {
+                    if (str_contains($searchString, mb_strtolower($area))) {
+                        $zoneAllowed = true;
+                        break;
+                    }
+                }
+                if (!$zoneAllowed) {
+                    $zoneError = 'Sorry, this address is beyond our 8km delivery zone and cannot be saved.';
                 }
             }
 
-            if (!$zoneAllowed && !empty($inRangeAreas)) {
-                $addressError = 'Sorry, this address is beyond our 8km delivery zone and cannot be saved.';
+            if (!$zoneAllowed) {
+                $addressError = $zoneError;
             } else {
                 try {
                     $pdo->beginTransaction();
@@ -134,12 +207,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['
                     // If this is the first address, make it default automatically
                     if ($addrCount === 0) $isDefault = 1;
                     $pdo->prepare(
-                        "INSERT INTO customer_addresses (customer_id, label, full_address, barangay, city, province, postal_code, is_default)
-                         VALUES (:cid, :label, :full, :bar, :city, :prov, :postal, :def)"
+                        "INSERT INTO customer_addresses (customer_id, label, full_address, barangay, city, province, postal_code, is_default, latitude, longitude)
+                         VALUES (:cid, :label, :full, :bar, :city, :prov, :postal, :def, :lat, :lng)"
                     )->execute([
                         'cid' => $customerId, 'label' => $label ?: 'Home',
                         'full' => $fullAddr, 'bar' => $barangay, 'city' => $city,
                         'prov' => $province, 'postal' => $postal, 'def' => $isDefault,
+                        'lat' => $pinLat, 'lng' => $pinLng,
                     ]);
                     $pdo->commit();
                     $addressSuccess = 'Address saved successfully.';
@@ -385,7 +459,7 @@ if ($favoritesPanelActive) $activePanelOnLoad = 'my-favorites';
 // Deep links such as account.php?panel=my-favorites (used after sign-in)
 $requestedPanel = (string) ($_GET['panel'] ?? '');
 if (!$passwordPanelActive && !$addressPanelActive && !$discountPanelActive && !$favoritesPanelActive
-    && in_array($requestedPanel, ['personal-details', 'my-addresses', 'discount-ids', 'my-vouchers', 'my-favorites', 'my-posts', 'password-security'], true)) {
+    && in_array($requestedPanel, ['personal-details', 'my-addresses', 'discount-ids', 'my-vouchers', 'my-favorites', 'my-posts', 'account-activities', 'password-security'], true)) {
     $activePanelOnLoad = $requestedPanel;
 }
 
@@ -396,9 +470,104 @@ $accountSections = [
     ['id' => 'my-vouchers',      'icon' => 'fa-ticket', 'title' => 'My Vouchers', 'description' => 'Your free delivery vouchers and promo perks.'],
     ['id' => 'my-favorites',     'icon' => 'fa-heart', 'title' => 'My Favorites', 'description' => 'Everything you tapped the heart on.'],
     ['id' => 'my-posts',         'icon' => 'fa-camera-retro', 'title' => 'My Posts', 'description' => 'Your BreadMoments and how they perform.'],
-    ['id' => 'account-activities', 'icon' => 'fa-clock-rotate-left', 'title' => 'Account Activities', 'description' => 'Review activity from your BreadBreak account.', 'disabled' => true],
+    ['id' => 'account-activities', 'icon' => 'fa-clock-rotate-left', 'title' => 'Account Activities', 'description' => 'Review activity from your BreadBreak account.'],
     ['id' => 'password-security', 'icon' => 'fa-lock', 'title' => 'Password & Security', 'description' => 'Keep your account password secure.'],
 ];
+
+// ── Account activities feed ─────────────────────────────────────────────────
+// Account Created / Password changed / Profile updated / Signed in / Signed out.
+// The audit rows are written best-effort by login.php, logout.php and the
+// handlers above (see includes/activity_log.php); "Account created" itself is
+// derived from users.created_at so even a brand-new account shows one entry.
+ensureUserActivityLog($pdo);
+$activityLogRows = [];
+try {
+    $activityStatement = $pdo->prepare(
+        'SELECT action, detail, created_at FROM user_activity_log WHERE user_id = :uid ORDER BY id DESC LIMIT 150'
+    );
+    $activityStatement->execute(['uid' => $customerId]);
+    $activityLogRows = $activityStatement->fetchAll();
+} catch (Throwable) {
+    $activityLogRows = [];
+}
+
+$activityLabels = [
+    'login'            => ['Signed in', 'fa-right-to-bracket', ''],
+    'logout'           => ['Signed out', 'fa-right-from-bracket', ''],
+    'password_changed' => ['Password changed', 'fa-lock', 'tone-accent'],
+    'photo_updated'    => ['Profile photo updated', 'fa-camera', 'tone-accent'],
+    'photo_removed'    => ['Profile photo removed', 'fa-camera', 'tone-accent'],
+    'profile_updated'  => ['Profile details updated', 'fa-id-card', 'tone-accent'],
+];
+
+$activityEvents = [];
+if (!empty($account['created_at'])) {
+    $activityEvents[] = [
+        'icon' => 'fa-user-plus',
+        'tone' => 'tone-ok',
+        'title' => 'Account created',
+        'detail' => 'BreadBreak customer account registered',
+        'at' => (string) $account['created_at'],
+    ];
+}
+foreach ($activityLogRows as $activityRow) {
+    $activityAction = (string) $activityRow['action'];
+    [$activityTitle, $activityIcon, $activityTone] = $activityLabels[$activityAction]
+        ?? [ucwords(str_replace('_', ' ', $activityAction)), 'fa-circle-info', ''];
+    $activityEvents[] = [
+        'icon' => $activityIcon,
+        'tone' => $activityTone,
+        'title' => $activityTitle,
+        'detail' => $activityRow['detail'] !== null ? (string) $activityRow['detail'] : null,
+        'at' => (string) $activityRow['created_at'],
+    ];
+}
+$activityQ = trim((string) ($_GET['q'] ?? ''));
+$activitySort = (string) ($_GET['sort'] ?? 'newest');
+if (!in_array($activitySort, ['newest', 'oldest'], true)) {
+    $activitySort = 'newest';
+}
+
+$totalActivities = count($activityEvents);
+if ($activityQ !== '') {
+    $activityNeedle = mb_strtolower($activityQ);
+    $activityEvents = array_values(array_filter(
+        $activityEvents,
+        function (array $event) use ($activityNeedle) {
+            $haystack = mb_strtolower(implode(' ', array_filter([$event['title'], $event['detail']])));
+            return $haystack !== '' && mb_stripos($haystack, $activityNeedle) !== false;
+        }
+    ));
+}
+usort(
+    $activityEvents,
+    $activitySort === 'oldest'
+        ? fn (array $a, array $b) => strcmp($a['at'], $b['at'])
+        : fn (array $a, array $b) => strcmp($b['at'], $a['at'])
+);
+$activityShown = count($activityEvents);
+$activityTruncated = count($activityEvents) > 120;
+$activityEvents = array_slice($activityEvents, 0, 120);
+
+$activityDays = [];
+foreach ($activityEvents as $activityEvent) {
+    $activityTs = strtotime($activityEvent['at']);
+    $activityDayKey = $activityTs !== false ? date('Y-m-d', $activityTs) : 'unknown';
+    if (!isset($activityDays[$activityDayKey])) {
+        if ($activityDayKey === date('Y-m-d')) {
+            $activityDayLabel = 'Today';
+        } elseif ($activityDayKey === date('Y-m-d', strtotime('-1 day'))) {
+            $activityDayLabel = 'Yesterday';
+        } else {
+            $activityDayLabel = $activityTs !== false ? date('D, M j, Y', $activityTs) : 'Unknown date';
+        }
+        $activityDays[$activityDayKey] = ['label' => $activityDayLabel, 'items' => []];
+    }
+    $activityDays[$activityDayKey]['items'][] = [
+        'event' => $activityEvent,
+        'time' => $activityTs !== false ? date('g:i A', $activityTs) : '',
+    ];
+}
 
 require __DIR__ . '/../includes/header.php';
 ?>
@@ -484,6 +653,8 @@ require __DIR__ . '/../includes/header.php';
                     <div class="address-add-form" id="addr-add-form" style="display:none;">
                         <form method="POST" class="account-form" style="margin-top:0;">
                             <input type="hidden" name="action" value="add_address" />
+                            <input type="hidden" name="addr_lat" id="addr_lat" value="" />
+                            <input type="hidden" name="addr_lng" id="addr_lng" value="" />
 
                             <!-- Interactive Map Location Picker (100% Free Leaflet + OpenStreetMap) -->
                             <div class="map-picker-card" style="margin-bottom:1.1rem;border:1.5px solid var(--border,#ded6d0);border-radius:14px;overflow:hidden;background:#fff;">
@@ -492,7 +663,7 @@ require __DIR__ . '/../includes/header.php';
                                         <strong style="font-size:.88rem;color:var(--brown-900);display:flex;align-items:center;gap:.4rem;">
                                             <i class="fa-solid fa-map-location-dot" style="color:var(--accent);"></i> Pin Your Location on Map
                                         </strong>
-                                        <p style="margin:.15rem 0 0;font-size:.76rem;color:var(--muted);">Click on the map or drag the pin to auto-fill your address. Green circle is our 8km delivery zone.</p>
+                                        <p style="margin:.15rem 0 0;font-size:.76rem;color:var(--muted);">Click on the map or drag the pin to auto-fill your address. Green circle is our <?= rtrim(rtrim(number_format((float) $mapMaxZoneKm, 1), '0'), '.') ?>km delivery zone.</p>
                                     </div>
                                     <button type="button" id="btn-locate-me" class="addr-btn addr-btn-default" style="font-size:.78rem;padding:.35rem .75rem;">
                                         <i class="fa-solid fa-crosshairs"></i> Use My GPS Location
@@ -839,6 +1010,70 @@ require __DIR__ . '/../includes/header.php';
                 <?php endif; ?>
             </section>
 
+            <!-- ── Account Activities Panel ── -->
+            <section class="account-panel<?php echo $activePanelOnLoad === 'account-activities' ? ' is-active' : ''; ?>" id="account-activities" data-account-panel>
+                <div class="account-panel-heading">
+                    <div>
+                        <span class="eyebrow">Your history</span>
+                        <h2>Account Activities</h2>
+                        <p>Sign-ins, sign-outs and account changes — search or sort to find one fast.</p>
+                    </div>
+                </div>
+
+                <form class="account-activity-tools" method="get" action="">
+                    <input type="hidden" name="panel" value="account-activities" />
+                    <div class="account-activity-search">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input type="search" name="q" value="<?php echo htmlspecialchars($activityQ); ?>"
+                               placeholder="Search activities…" autocomplete="off" />
+                    </div>
+                    <label class="account-activity-sort">
+                        <span>Sort</span>
+                        <select name="sort" onchange="this.form.submit();">
+                            <option value="newest"<?php echo $activitySort === 'newest' ? ' selected' : ''; ?>>Newest first</option>
+                            <option value="oldest"<?php echo $activitySort === 'oldest' ? ' selected' : ''; ?>>Oldest first</option>
+                        </select>
+                    </label>
+                    <button class="account-activity-search-btn" type="submit"><i class="fa-solid fa-magnifying-glass"></i> Search</button>
+                    <span class="account-activity-count"><?php echo $activityShown; ?> of <?php echo $totalActivities; ?> activities</span>
+                </form>
+
+                <?php if ($activityTruncated): ?>
+                    <p class="account-form-note"><i class="fa-solid fa-circle-info"></i>
+                        Showing the <?php echo $activitySort === 'oldest' ? 'earliest' : 'most recent'; ?> 120 activities — refine your search to see the rest.
+                    </p>
+                <?php endif; ?>
+
+                <?php if (!$activityDays): ?>
+                    <div class="account-activity-empty">
+                        <i class="fa-solid <?php echo $activityQ !== '' ? 'fa-magnifying-glass' : 'fa-clock-rotate-left'; ?>"></i>
+                        <p><?php if ($activityQ !== '') {
+                            echo 'No activities match &ldquo;' . htmlspecialchars($activityQ) . '&rdquo; — try another keyword.';
+                        } else {
+                            echo 'No activity recorded yet — sign-ins and account changes will show up here.';
+                        } ?></p>
+                    </div>
+                <?php else: ?>
+                    <?php foreach ($activityDays as $activityDay): ?>
+                        <div class="account-activity-day"><span><?php echo htmlspecialchars($activityDay['label']); ?></span></div>
+                        <ul class="account-activity-list">
+                            <?php foreach ($activityDay['items'] as $activityItem): $activityEvent = $activityItem['event']; ?>
+                                <li class="account-activity-item<?php echo $activityEvent['tone'] !== '' ? ' ' . $activityEvent['tone'] : ''; ?>">
+                                    <span class="account-activity-icon"><i class="fa-solid <?php echo htmlspecialchars($activityEvent['icon']); ?>"></i></span>
+                                    <div class="account-activity-body">
+                                        <strong><?php echo htmlspecialchars($activityEvent['title']); ?></strong>
+                                        <?php if ($activityEvent['detail']): ?>
+                                            <p><?php echo htmlspecialchars($activityEvent['detail']); ?></p>
+                                        <?php endif; ?>
+                                    </div>
+                                    <time><?php echo htmlspecialchars($activityItem['time']); ?></time>
+                                </li>
+                            <?php endforeach; ?>
+                        </ul>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </section>
+
             <!-- ── Password & Security Panel ── -->
             <section class="account-panel<?php echo $activePanelOnLoad === 'password-security' ? ' is-active' : ''; ?>" id="password-security" data-account-panel><div class="account-panel-heading"><div><span class="eyebrow">Account protection</span><h2>Password &amp; Security</h2><p>Update your password regularly to keep your account protected.</p></div></div><?php if ($passwordError): ?><p class="account-form-error" role="alert"><?php echo htmlspecialchars($passwordError); ?></p><?php endif; ?><form class="account-form" method="POST" data-password-form><input type="hidden" name="action" value="change_password" /><label>Current Password<div class="account-password-field"><input type="password" name="current_password" data-current-password placeholder="Enter current password" required /><button type="button" data-toggle-account-password aria-label="Show password"><i class="fa-solid fa-eye"></i></button></div></label><label>New Password<div class="account-password-field"><input type="password" name="new_password" data-new-password placeholder="Enter new password" required /><button type="button" data-toggle-account-password aria-label="Show password"><i class="fa-solid fa-eye"></i></button></div><div class="password-strength" aria-live="polite"><div class="password-strength-label"><span>Password strength</span><strong data-password-strength-label>Enter a password</strong></div><div class="password-strength-track"><span data-password-strength-bar></span></div><small data-password-strength-help>Use at least 8 characters with uppercase, lowercase, number, and symbol.</small></div></label><label>Confirm Password<div class="account-password-field"><input type="password" name="confirm_password" data-confirm-password placeholder="Confirm new password" required /><button type="button" data-toggle-account-password aria-label="Show password"><i class="fa-solid fa-eye"></i></button></div><small class="password-match-message" data-password-match></small></label><button class="account-save-button" type="submit" disabled>Change Password</button><p class="account-form-note" data-password-form-message><?php echo htmlspecialchars($passwordSuccess); ?></p></form></section>
 
@@ -899,8 +1134,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const addCancel  = document.getElementById('addr-add-cancel');
 
     // BreadBreak Store Branch Coordinates (Estrella Village, Guiguinto, Bulacan)
-    const STORE_LAT = 14.830905;
-    const STORE_LNG = 120.869675;
+    const STORE_LAT = <?= json_encode($mapBranchLat) ?>;
+    const STORE_LNG = <?= json_encode($mapBranchLng) ?>;
+    const MAX_DELIVERY_KM = <?= json_encode($mapMaxZoneKm) ?>;
     let map = null;
     let customerMarker = null;
 
@@ -1006,12 +1242,12 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         if (statusBadge) {
-            if (distKm <= 8.0) {
-                statusBadge.innerHTML = '<span style="color:#1d7044;font-weight:700;"><i class="fa-solid fa-circle-check" style="color:#28a067;margin-right:.3rem;"></i>Within 8km Delivery Zone (' + distKm.toFixed(1) + ' km)</span>';
+            if (distKm <= MAX_DELIVERY_KM) {
+                statusBadge.innerHTML = '<span style="color:#1d7044;font-weight:700;"><i class="fa-solid fa-circle-check" style="color:#28a067;margin-right:.3rem;"></i>Within ' + MAX_DELIVERY_KM + 'km Delivery Zone (' + distKm.toFixed(1) + ' km)</span>';
                 setSaveButtonState(true, '');
             } else {
-                statusBadge.innerHTML = '<span style="color:#c53030;font-weight:700;"><i class="fa-solid fa-circle-xmark" style="color:#e53e3e;margin-right:.3rem;"></i>Beyond 8km Delivery Zone (' + distKm.toFixed(1) + ' km) — Cannot save</span>';
-                setSaveButtonState(false, '<i class="fa-solid fa-circle-xmark" style="margin-right:.3rem;"></i>Cannot save: This location is beyond our 8km delivery zone.');
+                statusBadge.innerHTML = '<span style="color:#c53030;font-weight:700;"><i class="fa-solid fa-circle-xmark" style="color:#e53e3e;margin-right:.3rem;"></i>Beyond ' + MAX_DELIVERY_KM + 'km Delivery Zone (' + distKm.toFixed(1) + ' km) — Cannot save</span>';
+                setSaveButtonState(false, '<i class="fa-solid fa-circle-xmark" style="margin-right:.3rem;"></i>Cannot save: This location is beyond our ' + MAX_DELIVERY_KM + 'km delivery zone.');
             }
         }
     }
@@ -1036,6 +1272,13 @@ document.addEventListener('DOMContentLoaded', function () {
         const distKm = getHaversineDistanceKm(STORE_LAT, STORE_LNG, lat, lng);
         updateDistanceDisplay(distKm);
 
+        // Carry the pin into the form so the server can verify the distance
+        // the same way checkout does, instead of guessing from keywords.
+        const pinLatField = document.getElementById('addr_lat');
+        const pinLngField = document.getElementById('addr_lng');
+        if (pinLatField) pinLatField.value = lat;
+        if (pinLngField) pinLngField.value = lng;
+
         customerMarker.bindPopup('<b>Your Selected Pin</b><br>' + distKm.toFixed(2) + ' km from BreadBreak').openPopup();
 
         if (doGeocode) {
@@ -1056,7 +1299,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         // 8km delivery zone circle
         L.circle([STORE_LAT, STORE_LNG], {
-            radius: 8000,
+            radius: MAX_DELIVERY_KM * 1000,
             color: '#28a067',
             fillColor: '#28a067',
             fillOpacity: 0.09,
@@ -1151,10 +1394,21 @@ document.addEventListener('DOMContentLoaded', function () {
             if (val.length < 5) { zoneResult.style.display = 'none'; return; }
             showAddrZone('loading', 'Checking delivery zone…');
             try {
+                // Send the pin too — checkout does the same. Without coords the
+                // API geocodes the text, and a reverse-geocoded string often
+                // fails to resolve, which wrongly disabled the Save button.
+                const payload = { address: val };
+                if (customerMarker) {
+                    const ll = customerMarker.getLatLng();
+                    if (Number.isFinite(ll.lat) && Number.isFinite(ll.lng)) {
+                        payload.lat = ll.lat;
+                        payload.lng = ll.lng;
+                    }
+                }
                 const resp = await fetch('/BreadBreak/api/delivery/check-address.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ address: val }),
+                    body: JSON.stringify(payload),
                 });
                 const data = await resp.json();
                 if (data.allowed) {
@@ -1162,7 +1416,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     showAddrZone('allowed', (data.message || 'Delivery available.') + fee);
                     setSaveButtonState(true, '');
                 } else {
-                    showAddrZone('blocked', (data.message || 'Outside 8km delivery zone.') + ' Addresses beyond 8km cannot be saved.');
+                    showAddrZone('blocked', data.message || 'This address is outside our delivery zone.');
                     setSaveButtonState(false, '<i class="fa-solid fa-circle-xmark" style="margin-right:.3rem;"></i>Cannot save: This address is beyond our 8km delivery zone.');
                 }
             } catch (e) {

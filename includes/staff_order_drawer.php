@@ -257,12 +257,20 @@ $drawerIndex = 'hx';
                                     <i class="fa-solid fa-user-plus"></i> Assign &amp; dispatch
                                 </button>
                             </form>
-                        <?php elseif ($action['kind'] === 'rider'): ?>
+                        <?php elseif ($action['kind'] === 'ready'): ?>
                             <form method="POST">
-                                <input type="hidden" name="action" value="send_on_the_way" />
+                                <input type="hidden" name="action" value="mark_ready" />
                                 <input type="hidden" name="order_id" value="<?php echo $oid; ?>" />
                                 <button class="order-action-btn is-primary" type="submit">
-                                    <i class="fa-solid fa-store"></i> Mark ready for pickup
+                                    <i class="fa-solid fa-store"></i> Mark as Ready
+                                </button>
+                            </form>
+                        <?php elseif ($action['kind'] === 'complete'): ?>
+                            <form method="POST">
+                                <input type="hidden" name="action" value="complete_pickup" />
+                                <input type="hidden" name="order_id" value="<?php echo $oid; ?>" />
+                                <button class="order-action-btn is-primary" type="submit">
+                                    <i class="fa-solid fa-circle-check"></i> <?php echo htmlspecialchars($action['label']); ?>
                                 </button>
                             </form>
                         <?php elseif ($action['kind'] === 'ontheway'): ?>

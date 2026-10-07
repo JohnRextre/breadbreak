@@ -19,7 +19,7 @@ $saved = false;
 // ── Load the order, scoped to this customer, delivered only ────────────────
 $stmt = $pdo->prepare(
     "SELECT o.id, o.reference_id, o.status, o.fulfillment_type, o.total_amount, o.rider_id,
-            o.created_at, o.chat_closed_at, o.review_acknowledged_at,
+            o.created_at, o.chat_closed_at, o.proof_captured_at, o.review_acknowledged_at,
             c.first_name AS customer_first, c.last_name AS customer_last,
             r.first_name AS rider_first, r.last_name AS rider_last, r.phone AS rider_phone,
             r.profile_data AS rider_photo, r.profile_mime AS rider_mime
@@ -38,9 +38,12 @@ if (!$order) {
 }
 
 $orderId = (int) $order['id'];
+$isPickup = ($order['fulfillment_type'] ?? 'delivery') === 'pickup';
 
 if ($order['status'] !== 'completed') {
-    $error = 'You can only review an order once it has been delivered.';
+    $error = $isPickup
+        ? 'You can only review an order once it has been picked up.'
+        : 'You can only review an order once it has been delivered.';
 }
 
 $existingStmt = $pdo->prepare('SELECT * FROM order_reviews WHERE order_id = :oid AND customer_id = :cid LIMIT 1');
@@ -50,6 +53,12 @@ $review = $existingStmt->fetch() ?: null;
 $topics = reviewFoodTopics();
 $traitOptions = reviewTraits();
 $serviceFields = reviewServiceRatings();
+if ($isPickup) {
+    // Store pickup: there is no rider and no delivery leg, so those ratings
+    // and delivery-only traits do not belong on this form.
+    unset($serviceFields['delivery_speed_rating'], $serviceFields['driver_service_rating']);
+    unset($traitOptions['regular_delivery_update'], $traitOptions['fast_delivery']);
+}
 $limits = reviewLimits();
 
 // ── Actions ────────────────────────────────────────────────────────────────
@@ -99,6 +108,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $order['status'] === 'completed') {
             $shop = reviewStarValue($_POST['shop_service_rating'] ?? null);
             $speed = reviewStarValue($_POST['delivery_speed_rating'] ?? null);
             $driver = reviewStarValue($_POST['driver_service_rating'] ?? null);
+            if ($isPickup) {
+                // Store pickup has no delivery or rider leg — never store one.
+                $speed = null;
+                $driver = null;
+            }
 
             $story = trim((string) ($_POST['service_story'] ?? ''));
             if (mb_strlen($story) > $limits['story_chars']) {
@@ -277,7 +291,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $order['status'] === 'completed') {
 $riderName = trim(($order['rider_first'] ?? '') . ' ' . ($order['rider_last'] ?? '')) ?: 'Your rider';
 $riderInitial = strtoupper(substr($riderName, 0, 1)) ?: 'R';
 $riderPhoto = userPhotoDataUri($order['rider_photo'] ?? null, $order['rider_mime'] ?? null);
-$isPickup = ($order['fulfillment_type'] ?? 'delivery') === 'pickup';
 
 $existingTopics = $review ? reviewTopicsFilled($review['food_topics'] ?? '') : [];
 $existingTraits = $review ? reviewTraitList($review['traits'] ?? '') : [];
@@ -339,7 +352,7 @@ require __DIR__ . '/../includes/header.php';
         <header class="rr-hero">
             <span class="eyebrow">Order Received</span>
             <h1>Reviews &amp; Rating</h1>
-            <p>Order #<?php echo htmlspecialchars($order['reference_id']); ?> · Delivered
+            <p>Order #<?php echo htmlspecialchars($order['reference_id']); ?> · <?php echo $isPickup ? 'Picked Up' : 'Delivered'; ?>
                 <?php echo $order['proof_captured_at'] ?? $order['chat_closed_at'] ? ' · ' . date('M j, Y', strtotime($order['proof_captured_at'] ?? $order['chat_closed_at'])) : ''; ?>
             </p>
         </header>
@@ -449,6 +462,7 @@ require __DIR__ . '/../includes/header.php';
                     <h2><i class="fa-solid fa-bread-slice"></i> Services</h2>
                 </div>
 
+                <?php if (!$isPickup): ?>
                 <div class="rr-rider">
                     <?php if ($riderPhoto): ?>
                         <img src="<?php echo htmlspecialchars($riderPhoto); ?>" alt="" />
@@ -457,9 +471,10 @@ require __DIR__ . '/../includes/header.php';
                     <?php endif; ?>
                     <div>
                         <strong><?php echo htmlspecialchars($riderName); ?></strong>
-                        <small><?php echo $isPickup ? 'Store pickup' : 'Your rider'; ?></small>
+                        <small>Your rider</small>
                     </div>
                 </div>
+                <?php endif; ?>
 
                 <div class="rr-service-grid">
                     <?php foreach ($serviceFields as $field => $label): ?>
@@ -469,7 +484,7 @@ require __DIR__ . '/../includes/header.php';
 
                 <div class="rr-block">
                     <h3>What stood out?</h3>
-                    <p class="rr-hint">Tick everything that applied to your delivery.</p>
+                    <p class="rr-hint">Tick everything that applied to your <?php echo $isPickup ? 'pickup' : 'delivery'; ?>.</p>
                     <div class="rr-traits">
                         <?php foreach ($traitOptions as $key => $label): ?>
                             <label class="rr-trait">
@@ -494,7 +509,9 @@ require __DIR__ . '/../includes/header.php';
 
             <p class="rr-note">
                 <i class="fa-solid fa-heart"></i>
-                Your rider rating and review will be shared to our shop and will be used to further improve our services. Thank you!
+                <?php echo $isPickup
+                    ? 'Your review will be shared to our shop and will be used to further improve our services. Thank you!'
+                    : 'Your rider rating and review will be shared to our shop and will be used to further improve our services. Thank you!'; ?>
             </p>
 
             <div class="rr-actions">

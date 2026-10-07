@@ -122,6 +122,10 @@ $momentIsOwn = $momentIsSignedIn && (int) $momentPost['user_id'] === $momentUser
 $momentStatus = (string) ($momentPost['moderation_status'] ?? 'visible');
 $momentIsPromo = ($momentPost['post_type'] ?? 'moment') === 'promotion';
 
+// Staff reviewing their own shop promotion (Shop Promotions → View live post)
+// see the post inside the staff portal chrome instead of the public layout.
+$momentStaffView = ($_SESSION['role'] ?? '') === 'staff' && $momentIsOwn && $momentIsPromo;
+
 // A voucher promotion is an ad, not a conversation: comments and likes are off
 // and the only action is Claiming the voucher.
 $momentVoucher = null;
@@ -242,9 +246,22 @@ $momentNotice = (string) ($_SESSION['moment_notice'] ?? '');
 unset($_SESSION['moment_notice']);
 ?>
 
+<?php if ($momentStaffView): ?>
+<?php
+$pageTitle = 'View Live Post';
+$activePage = 'promotions';
+$staffExtraCss = ['/BreadBreak/assets/css/style.css?v=' . (file_exists(__DIR__ . '/assets/css/style.css') ? filemtime(__DIR__ . '/assets/css/style.css') : time())];
+require __DIR__ . '/includes/staff_header.php';
+?>
+<?php else: ?>
 <?php include __DIR__ . '/includes/header.php'; ?>
+<?php endif; ?>
 
+<?php if ($momentStaffView): ?>
+<div class="moment-detail">
+<?php else: ?>
 <main class="moment-detail">
+<?php endif; ?>
     <div class="container moment-detail-shell">
 
         <?php if ($momentNotice !== ''): ?>
@@ -280,7 +297,7 @@ unset($_SESSION['moment_notice']);
         <?php endif; ?>
 
         <div class="moment-detail-top">
-            <a class="moment-back" href="/BreadBreak/moments.php"><i class="fa-solid fa-arrow-left"></i> Back to BreadMoments</a>
+            <a class="moment-back" href="<?php echo $momentStaffView ? '/BreadBreak/staff/promotions.php' : '/BreadBreak/moments.php'; ?>"><i class="fa-solid fa-arrow-left"></i> <?php echo $momentStaffView ? 'Back to Shop Promotions' : 'Back to BreadMoments'; ?></a>
 
             <?php if (!$momentIsPromo): ?>
             <!-- 3-dots menu -->
@@ -410,22 +427,17 @@ unset($_SESSION['moment_notice']);
             <!-- Likes total sits ABOVE the like icon row -->
             <footer class="moment-detail-foot">
                 <p class="moment-likes-row"><i class="fa-solid fa-heart"></i> <b id="momentLikeCount"><?php echo $momentLikeCount; ?></b> like<?php echo $momentLikeCount === 1 ? '' : 's'; ?></p>
+                <?php if ($momentIsSignedIn): ?>
                 <div class="moment-actions-row">
-                    <?php if ($momentIsSignedIn): ?>
-                        <button type="button" class="moment-action-btn<?php echo $momentLikedByMe ? ' is-on' : ''; ?>" id="momentLikePost"
-                                data-moment="<?php echo (int) $momentId; ?>" aria-pressed="<?php echo $momentLikedByMe ? 'true' : 'false'; ?>">
-                            <i class="fa-solid fa-thumbs-up"></i> <span id="momentLikeLabel"><?php echo $momentLikedByMe ? 'Liked' : 'Like'; ?></span>
-                        </button>
-                        <button type="button" class="moment-action-btn" id="momentJumpComment">
-                            <i class="fa-regular fa-comment"></i> Comment <span class="moment-action-count">(<?php echo $momentCommentCount; ?>)</span>
-                        </button>
-                    <?php else: ?>
-                        <a class="moment-action-btn" href="/BreadBreak/login.php?redirect=moments"><i class="fa-solid fa-thumbs-up"></i> Like</a>
-                        <a class="moment-action-btn" href="/BreadBreak/login.php?redirect=moments">
-                            <i class="fa-regular fa-comment"></i> Comment <span class="moment-action-count">(<?php echo $momentCommentCount; ?>)</span>
-                        </a>
-                    <?php endif; ?>
+                    <button type="button" class="moment-action-btn<?php echo $momentLikedByMe ? ' is-on' : ''; ?>" id="momentLikePost"
+                            data-moment="<?php echo (int) $momentId; ?>" aria-pressed="<?php echo $momentLikedByMe ? 'true' : 'false'; ?>">
+                        <i class="fa-solid fa-thumbs-up"></i> <span id="momentLikeLabel"><?php echo $momentLikedByMe ? 'Liked' : 'Like'; ?></span>
+                    </button>
+                    <button type="button" class="moment-action-btn" id="momentJumpComment">
+                        <i class="fa-regular fa-comment"></i> Comment <span class="moment-action-count">(<?php echo $momentCommentCount; ?>)</span>
+                    </button>
                 </div>
+                <?php endif; ?>
             </footer>
             <?php endif; ?>
         </article>
@@ -465,7 +477,11 @@ unset($_SESSION['moment_notice']);
         </section>
         <?php endif; ?>
     </div>
+<?php if ($momentStaffView): ?>
+</div>
+<?php else: ?>
 </main>
+<?php endif; ?>
 
 <!-- Report dialog -->
 <div class="moment-report-backdrop" id="momentReportBackdrop" hidden></div>
@@ -841,4 +857,8 @@ unset($_SESSION['moment_notice']);
 })();
 </script>
 
+<?php if ($momentStaffView): ?>
+<?php require __DIR__ . '/includes/staff_footer.php'; ?>
+<?php else: ?>
 <?php include __DIR__ . '/includes/footer.php'; ?>
+<?php endif; ?>

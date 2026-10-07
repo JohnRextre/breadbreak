@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/auth.php';
 requireRole('staff');
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/activity_log.php';
 
 $pageTitle = 'My Account';
 $activePage = 'profile';
@@ -27,6 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $updatedPhone = trim((string) ($_POST['phone'] ?? ''));
             $updatedEmail = trim((string) ($_POST['email'] ?? ''));
             $pdo->prepare('UPDATE users SET first_name = :first_name, last_name = :last_name, phone = :phone, email = :email WHERE id = :id')->execute(['first_name' => $updatedFirstName, 'last_name' => $updatedLastName, 'phone' => $updatedPhone, 'email' => $updatedEmail, 'id' => $userId]);
+            logUserActivity($pdo, $userId, 'profile_updated', 'Updated the profile details');
             $_SESSION['first_name'] = $updatedFirstName;
             $_SESSION['last_name'] = $updatedLastName;
             $_SESSION['email'] = $updatedEmail;
@@ -34,6 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if (($_POST['photo_action'] ?? 'upload') === 'remove') {
             $pdo->prepare('UPDATE users SET profile_data = NULL, profile_mime = NULL WHERE id = :id')->execute(['id' => $userId]);
+            logUserActivity($pdo, $userId, 'photo_removed', 'Removed the profile photo');
             $accountSuccess = 'Profile photo removed.';
         } elseif (empty($_FILES['profile_photo']['name']) || $_FILES['profile_photo']['error'] !== UPLOAD_ERR_OK) {
             if ($action === 'update_profile') $accountSuccess = 'Profile details updated successfully.';
@@ -47,6 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($photoData === false) $accountError = 'Unable to read the profile photo.';
                 else {
                     $pdo->prepare('UPDATE users SET profile_data = :profile_data, profile_mime = :profile_mime WHERE id = :id')->execute(['profile_data' => $photoData, 'profile_mime' => $mime, 'id' => $userId]);
+                    logUserActivity($pdo, $userId, 'photo_updated', 'Uploaded a new profile photo');
                     $accountSuccess = 'Profile photo updated successfully.';
                 }
             }
@@ -64,6 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         elseif ($newPassword === $currentPassword) $accountError = 'New password must be different from your current password.';
         else {
             $pdo->prepare('UPDATE users SET password = :password WHERE id = :id')->execute(['password' => password_hash($newPassword, PASSWORD_DEFAULT), 'id' => $userId]);
+            logUserActivity($pdo, $userId, 'password_changed', 'Changed the account password');
             $accountSuccess = 'Password changed successfully.';
         }
     }

@@ -126,19 +126,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 }
             }
 
-        } elseif ($action === 'send_on_the_way') {
-            $result = applyOrderStatus(
-                $pdo,
-                $orderId,
-                'out_for_delivery',
-                $actor,
-                'Marked on the way by staff.',
-                ['rider_id' => (int) $order['rider_id']]
-            );
-            if ($result['ok']) {
-                $statusSuccess = 'Order #' . $ref . ' is now on the way.';
+        } elseif ($action === 'mark_ready') {
+            // Pickup only: baking done → ready_for_pickup (never the rider flow).
+            if ($fulfillment !== 'pickup') {
+                $statusError = 'Delivery orders are dispatched by assigning a rider.';
             } else {
-                $statusError = $result['error'];
+                $result = applyOrderStatus($pdo, $orderId, 'ready_for_pickup', $actor, 'Ready for pickup — marked by staff.');
+                if ($result['ok']) {
+                    $statusSuccess = 'Order #' . $ref . ' is ready for pickup.';
+                } else {
+                    $statusError = $result['error'];
+                }
+            }
+
+        } elseif ($action === 'complete_pickup') {
+            // Pickup only: the customer collected it at the store, so staff closes it.
+            if ($fulfillment !== 'pickup') {
+                $statusError = 'Deliveries are marked delivered by the rider, with a photo.';
+            } else {
+                $result = applyOrderStatus($pdo, $orderId, 'completed', $actor, 'Picked up by the customer at the store.');
+                if ($result['ok']) {
+                    $statusSuccess = 'Order #' . $ref . ' was picked up — the order is now closed.';
+                } else {
+                    $statusError = $result['error'];
+                }
+            }
+
+        } elseif ($action === 'send_on_the_way') {
+            if ($fulfillment === 'pickup') {
+                $statusError = 'Store pickup orders do not need a rider.';
+            } else {
+                $result = applyOrderStatus(
+                    $pdo,
+                    $orderId,
+                    'out_for_delivery',
+                    $actor,
+                    'Marked on the way by staff.',
+                    ['rider_id' => (int) $order['rider_id']]
+                );
+                if ($result['ok']) {
+                    $statusSuccess = 'Order #' . $ref . ' is now on the way.';
+                } else {
+                    $statusError = $result['error'];
+                }
             }
 
         } elseif ($action === 'cancel_order') {
@@ -467,12 +497,20 @@ require __DIR__ . '/../includes/staff_header.php';
                                             </select>
                                         </div>
                                     </form>
-                                <?php elseif ($action['kind'] === 'rider'): ?>
+                                <?php elseif ($action['kind'] === 'ready'): ?>
                                     <form method="POST">
-                                        <input type="hidden" name="action" value="send_on_the_way" />
+                                        <input type="hidden" name="action" value="mark_ready" />
                                         <input type="hidden" name="order_id" value="<?php echo $oid; ?>" />
                                         <button class="order-action-btn is-primary" type="submit">
-                                            <i class="fa-solid fa-store"></i> Mark ready
+                                            <i class="fa-solid fa-<?php echo $action['icon']; ?>"></i> <?php echo $action['label']; ?>
+                                        </button>
+                                    </form>
+                                <?php elseif ($action['kind'] === 'complete'): ?>
+                                    <form method="POST">
+                                        <input type="hidden" name="action" value="complete_pickup" />
+                                        <input type="hidden" name="order_id" value="<?php echo $oid; ?>" />
+                                        <button class="order-action-btn is-primary" type="submit">
+                                            <i class="fa-solid fa-circle-check"></i> <?php echo $action['label']; ?>
                                         </button>
                                     </form>
                                 <?php elseif ($action['kind'] === 'ontheway'): ?>

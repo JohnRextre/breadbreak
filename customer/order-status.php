@@ -25,6 +25,15 @@ ensureOrderStatusHistory($pdo);
 ensureReviewSupport($pdo);
 $customerId = (int) $_SESSION['user_id'];
 
+// The "View Order History" screen (customer/order-history.php) reuses this file:
+// same queries, rows and detail panels — but only the history section, and it
+// adds search + sort on top of the tab filter.
+$fullHistoryView = basename($_SERVER['PHP_SELF']) === 'order-history.php';
+$historySearch = trim((string) ($_GET['q'] ?? ''));
+$historySort = in_array($_GET['sort'] ?? '', ['newest', 'oldest', 'total_desc', 'total_asc'], true)
+    ? (string) $_GET['sort']
+    : 'newest';
+
 $selectedRef = trim($_GET['ref'] ?? '');
 // 'delivered' is the label staff and customers use; the stored status is
 // 'completed'. Map the tab to the status rather than comparing them directly.
@@ -137,10 +146,50 @@ if ($allIds) {
 }
 $historyMap = orderStatusHistoryMap($pdo, $orders);
 
+// ── Full history screen: search + sort ──────────────────────────────────────
+if ($fullHistoryView) {
+    if ($historySearch !== '') {
+        $needle = mb_strtolower($historySearch);
+        $visibleHistory = array_values(array_filter($visibleHistory, static function (array $r) use ($needle, $itemsMap): bool {
+            $haystack = [
+                (string) $r['reference_id'],
+                date('M j, Y · g:i A', strtotime((string) $r['created_at'])),
+                date('Y-m-d', strtotime((string) $r['created_at'])),
+                orderPaymentLabelShort($r['payment_method']),
+                ($r['fulfillment_type'] ?? 'delivery') === 'pickup' ? 'store pickup' : 'delivery',
+                $r['status'] === 'cancelled' ? 'cancelled' : 'delivered',
+                trim(($r['rider_first'] ?? '') . ' ' . ($r['rider_last'] ?? '')),
+            ];
+            foreach ($itemsMap[(int) $r['id']] ?? [] as $item) {
+                $haystack[] = $item['product_name'] . ' ' . ($item['service_size'] ?? '');
+            }
+            foreach ($haystack as $text) {
+                if ($text !== '' && mb_strpos(mb_strtolower((string) $text), $needle) !== false) {
+                    return true;
+                }
+            }
+            return false;
+        }));
+    }
+
+    usort($visibleHistory, static function (array $a, array $b) use ($historySort): int {
+        return match ($historySort) {
+            'oldest'       => strtotime((string) $a['created_at']) <=> strtotime((string) $b['created_at']),
+            'total_desc'   => (float) $b['total_amount'] <=> (float) $a['total_amount'],
+            'total_asc'    => (float) $a['total_amount'] <=> (float) $b['total_amount'],
+            default        => (int) $b['id'] <=> (int) $a['id'],
+        };
+    });
+}
+
+// My Orders previews only the three newest; the full screen shows everything.
+$historyPreview = $fullHistoryView ? $visibleHistory : array_slice($visibleHistory, 0, 3);
+
 $hasActive = !empty($activeOrders);
 $hasAny = !empty($orders);
 
-$pageTitle = 'My Orders | BreadBreak';
+$pageTitle = $fullHistoryView ? 'Order History | BreadBreak' : 'My Orders | BreadBreak';
+$currentPage = 'order-status.php'; // keep "My Orders" active in the nav on both screens
 require __DIR__ . '/../includes/header.php';
 ?>
 <link rel="stylesheet" href="<?php echo BASE_URL; ?>/assets/css/checkout.css" />
@@ -151,11 +200,16 @@ require __DIR__ . '/../includes/header.php';
 
         <header class="os-hero">
             <div>
-                <span class="eyebrow"><?php echo $hasActive ? 'Live tracking' : 'Your bakery history'; ?></span>
-                <h1>My Orders</h1>
-                <p><?php echo $hasActive
-                    ? 'Follow your breads from the oven to your door, or to the pickup counter.'
-                    : 'Every order you have placed, all in one place.'; ?></p>
+                <span class="eyebrow"><?php echo $fullHistoryView || !$hasActive ? 'Your bakery history' : 'Live tracking'; ?></span>
+                <h1><?php echo $fullHistoryView ? 'Order History' : 'My Orders'; ?></h1>
+                <?php if ($fullHistoryView): ?>
+                    <p>Every delivered and cancelled order — search, sort, or filter to find one fast.</p>
+                    <a class="os-back" href="<?php echo BASE_URL; ?>/customer/order-status.php"><i class="fa-solid fa-arrow-left"></i> Back to My Orders</a>
+                <?php else: ?>
+                    <p><?php echo $hasActive
+                        ? 'Follow your breads from the oven to your door, or to the pickup counter.'
+                        : 'Every order you have placed, all in one place.'; ?></p>
+                <?php endif; ?>
             </div>
             <?php if ($hasAny): ?>
                 <div class="os-hero-stats">
@@ -197,6 +251,7 @@ require __DIR__ . '/../includes/header.php';
 
         <?php else: ?>
 
+            <?php if (!$fullHistoryView): ?>
             <!-- ── Active orders ──────────────────────────────────────────── -->
             <section class="os-section">
                 <div class="os-section-head">
@@ -242,7 +297,9 @@ require __DIR__ . '/../includes/header.php';
                             </div>
 
                             <div class="os-card-track">
-                                <?php echo renderOrderStatusTracker($row['status'], $ftype, $isFeatured ? 'large' : 'compact'); ?>
+                                <?php /* Every active card uses the same tracker size so the
+                                        pickup card lines up with the delivery one. */ ?>
+                                <?php echo renderOrderStatusTracker($row['status'], $ftype, 'large'); ?>
                             </div>
                             <p class="os-card-label"><?php echo htmlspecialchars(orderStatusCustomerLabel($row['status'], $ftype)); ?></p>
                             <p class="os-card-message"><?php echo htmlspecialchars(orderStatusCustomerMessage($row['status'], $ftype)); ?></p>
@@ -260,7 +317,7 @@ require __DIR__ . '/../includes/header.php';
                                 <div class="os-received-bar">
                                     <div>
                                         <strong>How did we do?</strong>
-                                        <p>This order was delivered. Rate your food and the service to help us improve.</p>
+                                        <p>This order was <?php echo $ftype === 'pickup' ? 'picked up' : 'delivered'; ?>. Rate your food and the service to help us improve.</p>
                                     </div>
                                     <a class="os-btn is-primary" href="<?php echo BASE_URL; ?>/customer/review.php?ref=<?php echo urlencode($ref); ?>">
                                         <i class="fa-solid fa-star"></i> Order Received
@@ -290,23 +347,32 @@ require __DIR__ . '/../includes/header.php';
                     </div>
                 <?php endif; ?>
             </section>
+            <?php endif; ?>
 
             <!-- ── Order History: delivered + cancelled ────────────────────── -->
             <section class="os-section is-history">
                 <div class="os-section-head">
                     <div>
                         <h2><i class="fa-solid fa-clock-rotate-left"></i> Order History</h2>
-                        <p>Every delivered and cancelled order. You can still rate anything you have not reviewed.</p>
+                        <p><?php echo $fullHistoryView
+                            ? 'Every delivered and cancelled order — search, sort or filter to find one fast.'
+                            : 'Your three most recent orders. You can still rate anything you have not reviewed.'; ?></p>
                     </div>
                     <div class="os-hist-tabs" role="tablist" aria-label="Filter order history">
-                        <?php foreach ([
+                        <?php
+                        // The full screen keeps the search and sort when switching tabs.
+                        $histQuery = $fullHistoryView
+                            ? ($historySearch !== '' ? '&q=' . urlencode($historySearch) : '')
+                              . ($historySort !== 'newest' ? '&sort=' . urlencode($historySort) : '')
+                            : '';
+                        foreach ([
                             'all' => 'All',
                             'delivered' => 'Delivered',
                             'cancelled' => 'Cancelled',
                         ] as $key => $label): ?>
                             <a class="os-hist-tab<?php echo $historyFilter === $key ? ' is-on' : ''; ?>"
                                role="tab" aria-selected="<?php echo $historyFilter === $key ? 'true' : 'false'; ?>"
-                               href="?history=<?php echo $key; ?><?php echo $selectedRef !== '' ? '&ref=' . urlencode($selectedRef) : ''; ?>">
+                               href="?history=<?php echo $key; ?><?php echo $histQuery; ?><?php echo $selectedRef !== '' ? '&ref=' . urlencode($selectedRef) : ''; ?>">
                                 <?php echo $label; ?>
                                 <span><?php echo $historyCounts[$key]; ?></span>
                             </a>
@@ -314,16 +380,46 @@ require __DIR__ . '/../includes/header.php';
                     </div>
                 </div>
 
+                <?php if ($fullHistoryView): ?>
+                    <form class="os-hist-tools" method="get" action="">
+                        <div class="os-hist-search">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                            <input type="search" name="q" value="<?php echo htmlspecialchars($historySearch); ?>"
+                                   placeholder="Search order #, date, payment, item or rider…" autocomplete="off" />
+                        </div>
+                        <label class="os-hist-sort">
+                            <span>Sort</span>
+                            <select name="sort" onchange="this.form.submit();">
+                                <option value="newest"<?php echo $historySort === 'newest' ? ' selected' : ''; ?>>Newest first</option>
+                                <option value="oldest"<?php echo $historySort === 'oldest' ? ' selected' : ''; ?>>Oldest first</option>
+                                <option value="total_desc"<?php echo $historySort === 'total_desc' ? ' selected' : ''; ?>>Total: high to low</option>
+                                <option value="total_asc"<?php echo $historySort === 'total_asc' ? ' selected' : ''; ?>>Total: low to high</option>
+                            </select>
+                        </label>
+                        <?php if ($historyFilter !== 'all'): ?>
+                            <input type="hidden" name="history" value="<?php echo htmlspecialchars($historyFilter); ?>" />
+                        <?php endif; ?>
+                        <button class="os-btn is-primary" type="submit"><i class="fa-solid fa-magnifying-glass"></i> Search</button>
+                        <span class="os-hist-count"><?php echo count($visibleHistory); ?> of <?php echo $historyCounts['all']; ?> order<?php echo $historyCounts['all'] === 1 ? '' : 's'; ?></span>
+                    </form>
+                <?php endif; ?>
+
                 <?php if (!$visibleHistory): ?>
                     <div class="os-section-empty">
                         <i class="fa-solid fa-box-open"></i>
-                        <?php echo $historyOrders
-                            ? 'No ' . htmlspecialchars($historyFilter) . ' orders yet.'
-                            : 'Once an order is delivered or cancelled, it moves here automatically.'; ?>
+                        <?php
+                        if ($fullHistoryView && $historySearch !== '') {
+                            echo 'No orders match &ldquo;' . htmlspecialchars($historySearch) . '&rdquo;.';
+                        } elseif ($historyOrders) {
+                            echo 'No ' . htmlspecialchars($historyFilter) . ' orders yet.';
+                        } else {
+                            echo 'Once an order is delivered or cancelled, it moves here automatically.';
+                        }
+                        ?>
                     </div>
                 <?php else: ?>
                     <div class="os-hist-list">
-                        <?php foreach ($visibleHistory as $row):
+                        <?php foreach ($historyPreview as $row):
                             $ref = (string) $row['reference_id'];
                             $ftype = $row['fulfillment_type'] ?? 'delivery';
                             $cancelled = $row['status'] === 'cancelled';
@@ -390,6 +486,17 @@ require __DIR__ . '/../includes/header.php';
                         </article>
                         <?php endforeach; ?>
                     </div>
+
+                    <?php if (!$fullHistoryView): ?>
+                        <div class="os-hist-more">
+                            <a class="os-btn is-soft" href="<?php echo BASE_URL; ?>/customer/order-history.php<?php echo $historyFilter !== 'all' ? '?history=' . urlencode($historyFilter) : ''; ?>">
+                                <i class="fa-solid fa-clock-rotate-left"></i> View Order History
+                                <?php if (count($historyOrders) > count($historyPreview)): ?>
+                                    <span class="os-hist-more-count"><?php echo count($historyOrders); ?></span>
+                                <?php endif; ?>
+                            </a>
+                        </div>
+                    <?php endif; ?>
                 <?php endif; ?>
             </section>
         <?php endif; ?>

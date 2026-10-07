@@ -275,6 +275,11 @@
     border-radius: 18px;
     background: #fff6ec;
 }
+/* Cards that show the review box pin it (with the actions) to the bottom, so
+   side-by-side cards — e.g. a delivery and a store pickup — line up even when
+   one card has an extra meta line (rider) or a shorter body. */
+.os-card.needs-review .os-received-bar { margin-top: auto; }
+.os-card.needs-review .os-card-actions { margin-top: 0; }
 .os-received-bar strong { display: block; font-size: 13.5px; font-weight: 800; color: var(--brown-700); }
 .os-received-bar p { margin: .2rem 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 
@@ -318,6 +323,96 @@
 .os-hist-tab.is-on span { background: rgba(255, 255, 255, .26); }
 
 .os-hist-list { display: grid; gap: .6rem; }
+
+/* ── history tools: search + sort (full Order History screen) ─────────────── */
+
+.os-hist-tools {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    flex-wrap: wrap;
+    margin-bottom: .95rem;
+}
+.os-hist-search {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1 1 320px;
+    min-width: 220px;
+}
+.os-hist-search i {
+    position: absolute;
+    left: 1rem;
+    color: var(--muted);
+    font-size: 13px;
+    pointer-events: none;
+}
+.os-hist-search input {
+    width: 100%;
+    padding: .7rem 1rem .7rem 2.4rem;
+    border: 1px solid rgba(52, 33, 21, .14);
+    border-radius: 999px;
+    background: #fff;
+    font: inherit;
+    font-size: 13px;
+    color: var(--brown-700);
+}
+.os-hist-search input:focus {
+    outline: none;
+    border-color: rgba(196, 118, 62, .55);
+    box-shadow: 0 0 0 3px rgba(196, 118, 62, .14);
+}
+.os-hist-sort {
+    display: inline-flex;
+    align-items: center;
+    gap: .45rem;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+}
+.os-hist-sort select {
+    padding: .68rem .9rem;
+    border: 1px solid rgba(52, 33, 21, .14);
+    border-radius: 999px;
+    background: #fff;
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--brown-700);
+    cursor: pointer;
+}
+.os-hist-sort select:focus {
+    outline: none;
+    border-color: rgba(196, 118, 62, .55);
+}
+.os-hist-count {
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+/* My Orders previews three rows and links out to the full screen. */
+.os-hist-more { display: flex; justify-content: center; margin-top: 1rem; }
+.os-hist-more-count {
+    padding: 0 .5rem;
+    border-radius: 999px;
+    background: rgba(52, 33, 21, .08);
+    font-size: 11px;
+}
+
+/* Back link on the full Order History screen. */
+.os-back {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    margin-top: .7rem;
+    color: var(--accent);
+    font-size: 12.5px;
+    font-weight: 800;
+    text-decoration: none;
+}
+.os-back:hover { text-decoration: underline; }
 
 .os-hist-row {
     display: grid;
@@ -660,6 +755,8 @@ body.os-modal-open { overflow: hidden; }
     .os-stat { min-width: 0; }
     .os-section-head { flex-direction: column; align-items: stretch; }
     .os-hist-tabs { overflow-x: auto; }
+    .os-hist-search { flex: 1 1 100%; }
+    .os-hist-count { margin-left: 0; }
     .os-received-bar { flex-direction: column; align-items: stretch; }
     .os-received-bar .os-btn { justify-content: center; }
     .os-card-actions .os-btn { flex: 1 1 auto; justify-content: center; }

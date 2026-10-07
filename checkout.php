@@ -55,6 +55,19 @@ if (!$pdo->query("SHOW COLUMNS FROM orders LIKE 'delivery_notes'")->fetch()) {
     $pdo->exec("ALTER TABLE orders ADD COLUMN delivery_notes TEXT NULL AFTER delivery_landmark");
 }
 
+// Saved addresses store the map pin so checkout can re-check them by distance
+// instead of re-geocoding the text (which often fails, or lands outside the
+// driving radius). Self-heal if database/migrate_delivery.php hasn't run yet —
+// otherwise the saved-address SELECT below would silently return nothing.
+if ($pdo->query("SHOW TABLES LIKE 'customer_addresses'")->fetch()) {
+    if (!$pdo->query("SHOW COLUMNS FROM customer_addresses LIKE 'latitude'")->fetch()) {
+        $pdo->exec("ALTER TABLE customer_addresses ADD COLUMN latitude DECIMAL(10,7) NULL AFTER is_default");
+    }
+    if (!$pdo->query("SHOW COLUMNS FROM customer_addresses LIKE 'longitude'")->fetch()) {
+        $pdo->exec("ALTER TABLE customer_addresses ADD COLUMN longitude DECIMAL(10,7) NULL AFTER latitude");
+    }
+}
+
 // Saved Senior / PWD IDs live in My Account — surfaced here for one-tap selection
 $pdo->exec("CREATE TABLE IF NOT EXISTS customer_discount_ids (id INT PRIMARY KEY AUTO_INCREMENT, customer_id INT NOT NULL, id_type ENUM('senior','pwd') NOT NULL DEFAULT 'senior', id_number VARCHAR(100) NOT NULL, full_name VARCHAR(150) NOT NULL, is_default TINYINT(1) NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, UNIQUE KEY uq_customer_disc (customer_id, id_number), KEY idx_disc_customer (customer_id), CONSTRAINT fk_disc_customer FOREIGN KEY (customer_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
@@ -667,7 +680,7 @@ $pageTitle = 'Checkout | BreadBreak';
 
                 <?php
                 $savedAddressStmt = $pdo->prepare(
-                    'SELECT id, label, full_address, barangay, city, province, postal_code, is_default
+                    'SELECT id, label, full_address, barangay, city, province, postal_code, is_default, latitude, longitude
                      FROM customer_addresses WHERE customer_id = :cid ORDER BY is_default DESC, created_at ASC'
                 );
                 $hasSavedAddresses = false;
@@ -2119,6 +2132,13 @@ $pageTitle = 'Checkout | BreadBreak';
                 return [
                     'id'   => $a['id'],
                     'text' => $text,
+                    // The pin the customer chose when they saved this address.
+                    // Lets checkout re-check by distance instead of re-geocoding
+                    // the text (which often fails or exceeds the driving radius).
+                    'lat'  => (isset($a['latitude']) && $a['latitude'] !== null && $a['latitude'] !== '')
+                        ? (float) $a['latitude'] : null,
+                    'lng'  => (isset($a['longitude']) && $a['longitude'] !== null && $a['longitude'] !== '')
+                        ? (float) $a['longitude'] : null,
                 ];
             }, $savedAddresses ?? []);
             echo json_encode($addrJsonList);
@@ -2128,6 +2148,9 @@ $pageTitle = 'Checkout | BreadBreak';
 
         addressData.forEach(function (addr) {
             const statusEl = document.getElementById('zone-status-' + addr.id);
+            const pinCoords = (addr.lat != null && addr.lng != null)
+                ? { lat: addr.lat, lng: addr.lng }
+                : undefined;
             checkZone(addr.text, function (data) {
                 checkedCount++;
                 if (statusEl) {
@@ -2147,10 +2170,14 @@ $pageTitle = 'Checkout | BreadBreak';
                         radio.dataset.zoneAllowed = data.allowed ? '1' : '0';
                         radio.dataset.zoneFee     = data.delivery_fee ?? 50;
                         radio.dataset.zoneMinOrder= data.min_order ?? 0;
+                        if (pinCoords) {
+                            radio.dataset.lat = String(pinCoords.lat);
+                            radio.dataset.lng = String(pinCoords.lng);
+                        }
                     }
                 }
                 applySelectedRadio();
-            });
+            }, pinCoords);
         });
 
         lastSavedRadio = [...radios].find(r => r.checked) || radios[0] || null;
@@ -2241,6 +2268,16 @@ $pageTitle = 'Checkout | BreadBreak';
             if (placeOrderBtn.disabled) {
                 e.preventDefault();
                 return;
+            }
+            // A saved address carries the pin the customer chose when saving it.
+            // Send it so the server validates by distance (and prices the zone)
+            // instead of re-guessing from the address text.
+            if (currentFulfillment === 'delivery' && savedAddrList && !usingOtherAddr && hiddenLat && hiddenLng) {
+                const checkedRadio = [...radios].find(r => r.checked);
+                if (checkedRadio && checkedRadio.dataset.lat && checkedRadio.dataset.lng) {
+                    hiddenLat.value = checkedRadio.dataset.lat;
+                    hiddenLng.value = checkedRadio.dataset.lng;
+                }
             }
             if (currentFulfillment === 'delivery' && checkoutPinKm != null && checkoutPinKm > MAX_DELIVERY_KM) {
                 e.preventDefault();

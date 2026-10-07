@@ -176,6 +176,10 @@ require __DIR__ . '/../includes/staff_header.php';
                     <a class="admin-button secondary" href="<?php echo BASE_URL; ?>/moment.php?id=<?php echo (int) $row['id']; ?>">
                         <i class="fa-solid fa-arrow-up-right-from-square"></i> View live post
                     </a>
+                    <?php elseif ($row['moderation_status'] === 'pending'): ?>
+                    <a class="admin-button secondary" href="<?php echo BASE_URL; ?>/moment.php?id=<?php echo (int) $row['id']; ?>">
+                        <i class="fa-regular fa-eye"></i> View pending post
+                    </a>
                     <?php else: ?>
                     <a class="admin-button primary" href="<?php echo BASE_URL; ?>/staff/moments.php?edit=<?php echo (int) $row['id']; ?>">
                         <i class="fa-solid fa-pen"></i> Edit &amp; resubmit

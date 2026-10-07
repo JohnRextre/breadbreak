@@ -8,7 +8,8 @@ $riderChatMode = !empty($riderChatMode);
 $riderAccount = [];
 if (!empty($_SESSION['user_id'])) {
     $riderStmt = getDatabaseConnection()->prepare(
-        'SELECT first_name, last_name, email, phone FROM users WHERE id = :id AND role = :role LIMIT 1'
+        'SELECT first_name, last_name, email, phone, profile_data, profile_mime
+         FROM users WHERE id = :id AND role = :role LIMIT 1'
     );
     $riderStmt->execute(['id' => (int) $_SESSION['user_id'], 'role' => 'rider']);
     $riderAccount = $riderStmt->fetch() ?: [];
@@ -21,6 +22,15 @@ if (!empty($_SESSION['user_id'])) {
 $riderName = trim(($riderAccount['first_name'] ?? $_SESSION['first_name'] ?? '') . ' ' . ($riderAccount['last_name'] ?? $_SESSION['last_name'] ?? ''));
 $riderName = $riderName !== '' ? $riderName : 'Rider';
 $riderInitial = strtoupper(substr($riderName, 0, 1));
+$riderPhoto = !empty($riderAccount['profile_data']) && !empty($riderAccount['profile_mime'])
+    ? 'data:' . $riderAccount['profile_mime'] . ';base64,' . base64_encode($riderAccount['profile_data'])
+    : '';
+$riderCurrentPage = basename($_SERVER['PHP_SELF']);
+$riderNavItems = [
+    ['label' => 'Home', 'href' => BASE_URL . '/rider/dashboard.php', 'page' => 'dashboard.php'],
+    ['label' => 'Delivery history', 'href' => BASE_URL . '/rider/history.php', 'page' => 'history.php'],
+    ['label' => 'Activity History', 'href' => BASE_URL . '/rider/activity.php', 'page' => 'activity.php'],
+];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -42,10 +52,58 @@ $riderInitial = strtoupper(substr($riderName, 0, 1));
                 <small>Rider</small>
             </span>
         </a>
+
+        <nav class="rider-nav" aria-label="Rider navigation">
+            <?php foreach ($riderNavItems as $navItem): ?>
+                <a href="<?php echo $navItem['href']; ?>"
+                   class="rider-nav-link<?php echo $riderCurrentPage === $navItem['page'] ? ' active' : ''; ?>"
+                   <?php echo $riderCurrentPage === $navItem['page'] ? 'aria-current="page"' : ''; ?>>
+                    <?php echo htmlspecialchars($navItem['label']); ?>
+                </a>
+            <?php endforeach; ?>
+        </nav>
+
         <div class="rider-identity">
-            <span class="rider-avatar"><?php echo htmlspecialchars($riderInitial); ?></span>
-            <span><?php echo htmlspecialchars($riderName); ?></span>
+            <div class="rider-account" data-rider-account>
+                <button class="rider-account-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Open account menu">
+                    <span class="rider-avatar"><?php if ($riderPhoto): ?><img src="<?php echo htmlspecialchars($riderPhoto); ?>" alt="" /><?php else: ?><?php echo htmlspecialchars($riderInitial); ?><?php endif; ?></span>
+                    <span class="rider-account-name"><?php echo htmlspecialchars($riderName); ?></span>
+                    <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                </button>
+                <div class="rider-account-menu" role="menu" hidden>
+                    <a role="menuitem" href="<?php echo BASE_URL; ?>/rider/account.php#personal-details">
+                        <i class="fa-solid fa-user" aria-hidden="true"></i> Personal details
+                    </a>
+                    <a role="menuitem" href="<?php echo BASE_URL; ?>/rider/account.php#password-security">
+                        <i class="fa-solid fa-lock" aria-hidden="true"></i> Password &amp; Security
+                    </a>
+                    <a role="menuitem" class="is-danger" href="<?php echo BASE_URL; ?>/rider/account.php?panel=delete">
+                        <i class="fa-solid fa-trash-can" aria-hidden="true"></i> Delete Account
+                    </a>
+                </div>
+            </div>
             <a href="<?php echo BASE_URL; ?>/logout.php" class="rider-logout"><i class="fa-solid fa-right-from-bracket"></i> Logout</a>
         </div>
     </header>
+    <script>
+    (function () {
+        var wrap = document.querySelector('[data-rider-account]');
+        if (!wrap) return;
+        var button = wrap.querySelector('.rider-account-btn');
+        var menu = wrap.querySelector('.rider-account-menu');
+        var close = function () { menu.hidden = true; button.setAttribute('aria-expanded', 'false'); };
+        button.addEventListener('click', function (event) {
+            event.stopPropagation();
+            var isOpen = !menu.hidden;
+            if (isOpen) close();
+            else { menu.hidden = false; button.setAttribute('aria-expanded', 'true'); }
+        });
+        document.addEventListener('click', function (event) {
+            if (!menu.hidden && !wrap.contains(event.target)) close();
+        });
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape' && !menu.hidden) { close(); button.focus(); }
+        });
+    })();
+    </script>
     <main class="rider-main<?php echo $riderChatMode ? ' rider-main-chat' : ''; ?>">

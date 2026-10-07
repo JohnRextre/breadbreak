@@ -1,8 +1,9 @@
 <?php
 if (session_status() === PHP_SESSION_NONE) session_start();
-$currentPage = basename($_SERVER['PHP_SELF']);
+$currentPage = $currentPage ?? basename($_SERVER['PHP_SELF']);
 $headerCartCount = isset($_SESSION['cart']) && is_array($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
 $isCustomerHeader = ($_SESSION['role'] ?? '') === 'customer';
+$isLoggedInHeader = !empty($_SESSION['user_id']);
 $customerProfileImage = $profileImage ?? '';
 $customerInitial = strtoupper(substr(trim((string) ($_SESSION['first_name'] ?? '')), 0, 1));
 $headerActiveOrders = 0;
@@ -93,7 +94,7 @@ if ($isCustomerHeader) {
                     <i class="fa-solid fa-bag-shopping"></i><span class="cart-count" data-cart-count><?php echo (int) $headerCartCount; ?></span>
                 </a>
                 <?php endif; ?>
-                <?php if ($isCustomerHeader): ?><a href="/BreadBreak/logout.php" class="btn btn-outline"><i class="fa-solid fa-right-from-bracket"></i> Logout</a><?php else: ?><a href="/BreadBreak/login.php" class="btn btn-outline"><i class="fa-solid fa-right-to-bracket"></i> Login</a><?php endif; ?>
+                <?php if ($isLoggedInHeader): ?><a href="/BreadBreak/logout.php" class="btn btn-outline"><i class="fa-solid fa-right-from-bracket"></i> Logout</a><?php else: ?><a href="/BreadBreak/login.php" class="btn btn-outline"><i class="fa-solid fa-right-to-bracket"></i> Login</a><?php endif; ?>
             </div>
         </div>
     </header>

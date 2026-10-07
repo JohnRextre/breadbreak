@@ -242,7 +242,52 @@ foreach ($activeJobs as $row) {
 }
 $deliveredCount = count($doneJobs);
 
-$pageTitle = 'Deliveries | BreadBreak';
+// The "Delivery history" screen (rider/history.php) reuses this file: same data
+// and trip cards, but only completed trips, with search + sort on top.
+$fullHistoryView = basename($_SERVER['PHP_SELF']) === 'history.php';
+$historySearch = trim((string) ($_GET['q'] ?? ''));
+$historySort = in_array($_GET['sort'] ?? '', ['newest', 'oldest', 'total_desc', 'total_asc'], true)
+    ? (string) $_GET['sort']
+    : 'newest';
+
+$historyJobs = $doneJobs;
+if ($fullHistoryView) {
+    if ($historySearch !== '') {
+        $needle = mb_strtolower($historySearch);
+        $historyJobs = array_values(array_filter($historyJobs, static function (array $r) use ($needle, $itemsMap): bool {
+            $haystack = [
+                (string) $r['reference_id'],
+                trim(($r['first_name'] ?? '') . ' ' . ($r['last_name'] ?? '')),
+                (string) ($r['phone'] ?? ''),
+                (string) ($r['delivery_address'] ?? ''),
+                date('M j, Y · g:i A', strtotime((string) $r['created_at'])),
+                date('Y-m-d', strtotime((string) $r['created_at'])),
+                orderPaymentLabelShort($r['payment_method']),
+                number_format((float) $r['total_amount'], 2),
+            ];
+            foreach ($itemsMap[(int) $r['id']] ?? [] as $item) {
+                $haystack[] = $item['product_name'] . ' ' . ($item['service_size'] ?? '');
+            }
+            foreach ($haystack as $text) {
+                if ($text !== '' && mb_strpos(mb_strtolower((string) $text), $needle) !== false) {
+                    return true;
+                }
+            }
+            return false;
+        }));
+    }
+
+    usort($historyJobs, static function (array $a, array $b) use ($historySort): int {
+        return match ($historySort) {
+            'oldest'     => strtotime((string) $a['created_at']) <=> strtotime((string) $b['created_at']),
+            'total_desc' => (float) $b['total_amount'] <=> (float) $a['total_amount'],
+            'total_asc'  => (float) $a['total_amount'] <=> (float) $b['total_amount'],
+            default      => (int) $b['id'] <=> (int) $a['id'],
+        };
+    });
+}
+
+$pageTitle = $fullHistoryView ? 'Delivery History | BreadBreak' : 'Deliveries | BreadBreak';
 require __DIR__ . '/../includes/rider_header.php';
 
 function riderProgressSteps(string $status): string
@@ -507,62 +552,110 @@ function riderJobCard(array $o, array $items, bool $history = false): void
 }
 ?>
 
-<div class="rider-hero">
-    <span class="rider-chip">Rider portal</span>
-    <h1>Your deliveries</h1>
-    <p>Only orders assigned to you by bakery staff appear here. A delivery photo is required before you can close out a trip.</p>
-</div>
+<?php if ($fullHistoryView): ?>
 
-<div class="rider-stats">
-    <div class="rider-stat">
-        <span class="rider-stat-icon is-way"><i class="fa-solid fa-bicycle"></i></span>
-        <div><strong><?php echo $onTheWay; ?></strong><small>On the way</small></div>
-    </div>
-    <div class="rider-stat">
-        <span class="rider-stat-icon"><i class="fa-solid fa-box"></i></span>
-        <div><strong><?php echo $waiting; ?></strong><small>Waiting to start</small></div>
-    </div>
-    <div class="rider-stat">
-        <span class="rider-stat-icon is-done"><i class="fa-solid fa-circle-check"></i></span>
-        <div><strong><?php echo $deliveredCount; ?></strong><small>Delivered</small></div>
-    </div>
-    <div class="rider-stat">
-        <span class="rider-stat-icon is-cash"><i class="fa-solid fa-coins"></i></span>
-        <div><strong>₱<?php echo number_format($pendingCash, 2); ?></strong><small>Cash to collect</small></div>
-    </div>
-</div>
+    <section class="rider-hero is-history">
+        <div class="rider-hero-copy">
+            <span class="rider-chip">Delivery history</span>
+            <h1>Completed trips</h1>
+            <p>Every delivery you have closed out — search or sort to find one fast.</p>
+            <a class="rider-back" href="<?php echo BASE_URL; ?>/rider/dashboard.php">
+                <i class="fa-solid fa-arrow-left"></i> Back to dashboard
+            </a>
+        </div>
+    </section>
 
-<?php if ($notice): ?>
-    <div class="rider-notice <?php echo $noticeType; ?>">
-        <i class="fa-solid <?php echo $noticeType === 'danger' ? 'fa-circle-exclamation' : 'fa-circle-check'; ?>"></i>
-        <?php echo htmlspecialchars($notice); ?>
-    </div>
-<?php endif; ?>
+    <form class="rider-tools" method="get" action="">
+        <div class="rider-search">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input type="search" name="q" value="<?php echo htmlspecialchars($historySearch); ?>"
+                   placeholder="Search order #, customer, address or item…" autocomplete="off" />
+        </div>
+        <label class="rider-sort">
+            <span>Sort</span>
+            <select name="sort" onchange="this.form.submit();">
+                <option value="newest"<?php echo $historySort === 'newest' ? ' selected' : ''; ?>>Newest first</option>
+                <option value="oldest"<?php echo $historySort === 'oldest' ? ' selected' : ''; ?>>Oldest first</option>
+                <option value="total_desc"<?php echo $historySort === 'total_desc' ? ' selected' : ''; ?>>Total: high to low</option>
+                <option value="total_asc"<?php echo $historySort === 'total_asc' ? ' selected' : ''; ?>>Total: low to high</option>
+            </select>
+        </label>
+        <button class="rider-btn primary" type="submit"><i class="fa-solid fa-magnifying-glass"></i> Search</button>
+        <span class="rider-tools-count">
+            <?php echo count($historyJobs); ?> of <?php echo count($doneJobs); ?> trip<?php echo count($doneJobs) === 1 ? '' : 's'; ?>
+        </span>
+    </form>
 
-<?php if (!$activeJobs): ?>
-    <div class="rider-empty">
-        <i class="fa-solid fa-bread-slice"></i>
-        <h2>No assigned deliveries yet</h2>
-        <p>When staff assigns a delivery to you, it will show up on this page.</p>
-    </div>
+    <?php if (!$historyJobs): ?>
+        <div class="rider-empty">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <h2><?php echo $historySearch ? 'No trips match your search' : 'No completed trips yet'; ?></h2>
+            <p><?php echo $historySearch
+                ? 'Try another order number, customer, address or item.'
+                : 'Trips move here once you mark them delivered.'; ?></p>
+        </div>
+    <?php else: ?>
+        <div class="rider-section-head">
+            <h2>Delivered trips</h2>
+            <span><?php echo count($historyJobs); ?></span>
+        </div>
+        <?php foreach ($historyJobs as $job): ?>
+            <?php riderJobCard($job, $itemsMap[$job['id']] ?? [], true); ?>
+        <?php endforeach; ?>
+    <?php endif; ?>
+
 <?php else: ?>
-    <div class="rider-section-head">
-        <h2>Active trips</h2>
-        <span><?php echo count($activeJobs); ?></span>
-    </div>
-    <?php foreach ($activeJobs as $job): ?>
-        <?php riderJobCard($job, $itemsMap[$job['id']] ?? []); ?>
-    <?php endforeach; ?>
-<?php endif; ?>
 
-<?php if ($doneJobs): ?>
-    <div class="rider-section-head">
-        <h2>Recently delivered</h2>
-        <span><?php echo count($doneJobs); ?></span>
+    <section class="rider-hero">
+        <div class="rider-hero-copy">
+            <span class="rider-chip">Rider portal</span>
+            <h1>Your deliveries</h1>
+            <p>Only orders assigned to you by bakery staff appear here. A delivery photo is required before you can close out a trip.</p>
+        </div>
+    </section>
+
+    <div class="rider-stats">
+        <div class="rider-stat">
+            <span class="rider-stat-icon is-way"><i class="fa-solid fa-bicycle"></i></span>
+            <div><strong><?php echo $onTheWay; ?></strong><small>On the way</small></div>
+        </div>
+        <div class="rider-stat">
+            <span class="rider-stat-icon"><i class="fa-solid fa-box"></i></span>
+            <div><strong><?php echo $waiting; ?></strong><small>Waiting to start</small></div>
+        </div>
+        <div class="rider-stat">
+            <span class="rider-stat-icon is-done"><i class="fa-solid fa-circle-check"></i></span>
+            <div><strong><?php echo $deliveredCount; ?></strong><small>Delivered</small></div>
+        </div>
+        <div class="rider-stat">
+            <span class="rider-stat-icon is-cash"><i class="fa-solid fa-coins"></i></span>
+            <div><strong>₱<?php echo number_format($pendingCash, 2); ?></strong><small>Cash to collect</small></div>
+        </div>
     </div>
-    <?php foreach (array_slice($doneJobs, 0, 8) as $job): ?>
-        <?php riderJobCard($job, $itemsMap[$job['id']] ?? [], true); ?>
-    <?php endforeach; ?>
+
+    <?php if ($notice): ?>
+        <div class="rider-notice <?php echo $noticeType; ?>">
+            <i class="fa-solid <?php echo $noticeType === 'danger' ? 'fa-circle-exclamation' : 'fa-circle-check'; ?>"></i>
+            <?php echo htmlspecialchars($notice); ?>
+        </div>
+    <?php endif; ?>
+
+    <?php if (!$activeJobs): ?>
+        <div class="rider-empty">
+            <i class="fa-solid fa-bread-slice"></i>
+            <h2>No active trips right now</h2>
+            <p>When staff assigns a delivery to you, it will show up on this page.</p>
+        </div>
+    <?php else: ?>
+        <div class="rider-section-head">
+            <h2>Active trips</h2>
+            <span><?php echo count($activeJobs); ?></span>
+        </div>
+        <?php foreach ($activeJobs as $job): ?>
+            <?php riderJobCard($job, $itemsMap[$job['id']] ?? []); ?>
+        <?php endforeach; ?>
+    <?php endif; ?>
+
 <?php endif; ?>
 
 <script>
