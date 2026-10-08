@@ -1,31 +1,45 @@
 <?php
 
 // =============================================================================
-// Xendit TEST MODE Configuration
+// Xendit Configuration
 // =============================================================================
 // IMPORTANT: This file must NEVER be served directly to the browser.
 //            Keep the secret key here only — never in JavaScript or HTML.
+//
+// Defaults below are TEST-MODE values for local development. Production
+// overrides (secret key, webhook token, webhook + return URLs) come from
+// config/local.php → 'xendit' section — see config/local.php.example.
+// The webhook token placeholder means webhook verification is SKIPPED, so
+// production MUST set a real token here before going live.
 // =============================================================================
 
-// -----------------------------------------------------------------------
-// TODO: Paste your Xendit TEST MODE Secret Key below (starts with xnd_development_…)
-// -----------------------------------------------------------------------
-define('XENDIT_SECRET_KEY', 'xnd_development_ytE7wCPSnbmjfMz95F08GTkgyLMaHEbxw7L2BAUWpTCvWJBj0YyxGuetYs0PZAqk');
+require_once __DIR__ . '/database.php'; // localConfig() overrides
 
-// -----------------------------------------------------------------------
-// TODO: Set this to the token shown in your Xendit Dashboard → Webhooks.
-//       Go to: Settings → Webhooks → copy the "Webhook Verification Token".
-// -----------------------------------------------------------------------
-define('XENDIT_WEBHOOK_TOKEN', 'YOUR_XENDIT_WEBHOOK_VERIFICATION_TOKEN_HERE');
+$xenditConfig = array_merge([
+    // -----------------------------------------------------------------------
+    // Xendit TEST MODE Secret Key (starts with xnd_development_…)
+    // -----------------------------------------------------------------------
+    'secret_key' => 'xnd_development_ytE7wCPSnbmjfMz95F08GTkgyLMaHEbxw7L2BAUWpTCvWJBj0YyxGuetYs0PZAqk',
 
-// -----------------------------------------------------------------------
-// Webhook URL — the public HTTPS URL that Xendit will POST to.
-// -----------------------------------------------------------------------
-define('XENDIT_WEBHOOK_URL', 'https://phosphate-upcountry-paprika.ngrok-free.dev/BreadBreak/webhook/xendit.php');
+    // -----------------------------------------------------------------------
+    // Webhook Verification Token (Xendit Dashboard → Settings → Webhooks).
+    // The placeholder below disables verification — acceptable only locally.
+    // -----------------------------------------------------------------------
+    'webhook_token' => 'YOUR_XENDIT_WEBHOOK_VERIFICATION_TOKEN_HERE',
 
-// Success / failure return URLs after the customer completes payment in Xendit.
-define('XENDIT_SUCCESS_RETURN_URL', 'http://localhost/BreadBreak/payment-return.php?status=success');
-define('XENDIT_FAILURE_RETURN_URL', 'http://localhost/BreadBreak/payment-return.php?status=cancel');
+    // Public HTTPS URL Xendit will POST to (full URL, incl. /xendit.php).
+    'webhook_url' => 'https://phosphate-upcountry-paprika.ngrok-free.dev/BreadBreak/webhook/xendit.php',
+
+    // Success / failure return URLs after the customer completes payment.
+    'return_success_url' => 'http://localhost/BreadBreak/payment-return.php?status=success',
+    'return_failure_url' => 'http://localhost/BreadBreak/payment-return.php?status=cancel',
+], localConfig('xendit'));
+
+define('XENDIT_SECRET_KEY', $xenditConfig['secret_key']);
+define('XENDIT_WEBHOOK_TOKEN', $xenditConfig['webhook_token']);
+define('XENDIT_WEBHOOK_URL', $xenditConfig['webhook_url']);
+define('XENDIT_SUCCESS_RETURN_URL', $xenditConfig['return_success_url']);
+define('XENDIT_FAILURE_RETURN_URL', $xenditConfig['return_failure_url']);
 
 // Xendit API base URL (v3 Payment Requests)
 define('XENDIT_API_BASE', 'https://api.xendit.co');

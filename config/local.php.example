@@ -36,13 +36,13 @@ return [
 
     // Xendit production credentials + webhook (Phase 3 — rotate everything
     // that was ever used locally; the local webhook secret was committed).
+    // webhook_token is REQUIRED in production — the committed placeholder
+    // skips webhook verification entirely.
     'xendit' => [
-        'webhook_token' => 'long-random-string-here',
-        'public_key' => '',
-        'secret_key' => '',
-        'webhook_base_url' => 'https://your-site.infinityfreeapp.com/BreadBreak/webhook',
-        'return_success_url' => 'https://your-site.infinityfreeapp.com/BreadBreak/payment-success.php',
-        'return_failure_url' => 'https://your-site.infinityfreeapp.com/BreadBreak/payment-failed.php',
-        'env' => 'production',
+        'secret_key' => 'xnd_production_…',
+        'webhook_token' => 'long-random-string-from-xendit-dashboard',
+        'webhook_url' => 'https://your-site.infinityfreeapp.com/BreadBreak/webhook/xendit.php',
+        'return_success_url' => 'https://your-site.infinityfreeapp.com/BreadBreak/payment-return.php?status=success',
+        'return_failure_url' => 'https://your-site.infinityfreeapp.com/BreadBreak/payment-return.php?status=cancel',
     ],
 ];
