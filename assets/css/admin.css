@@ -1107,3 +1107,57 @@ body.rv-viewer-open { overflow: hidden; }
     .rv-topics { grid-template-columns: 1fr; gap: 2px; }
     .rv-topics dd { margin-bottom: 6px; }
 }
+
+/* ── Audit feeds: Activity/Inventory History (staff+admin) & System Logs ───────────── */
+.audit-feed { margin-top: 2px; }
+.audit-day {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--admin-muted);
+    padding: 18px 2px 8px;
+    border-bottom: 2px solid var(--admin-line);
+    margin-bottom: 2px;
+}
+.audit-list { list-style: none; margin: 0; padding: 0; }
+.audit-item {
+    display: grid;
+    grid-template-columns: 40px 1fr auto;
+    gap: 14px;
+    align-items: center;
+    padding: 13px 4px;
+    border-bottom: 1px solid #f2ece7;
+}
+.audit-item:last-child { border-bottom: 0; }
+.audit-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 11px;
+    display: grid;
+    place-items: center;
+    background: #f4ece6;
+    color: var(--admin-brown);
+    font-size: 15px;
+}
+.audit-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.audit-copy strong { font-size: 13.5px; font-weight: 800; color: var(--admin-brown-dark); }
+.audit-copy small { font-size: 12.5px; color: var(--admin-muted); line-height: 1.45; }
+.audit-copy small.is-actor i { margin-right: 5px; opacity: .8; }
+.audit-time { font-size: 12px; font-weight: 700; color: var(--admin-muted); white-space: nowrap; }
+
+@media (max-width: 640px) {
+    .audit-item { grid-template-columns: 34px 1fr; gap: 10px; }
+    .audit-icon { width: 34px; height: 34px; font-size: 13px; }
+    .audit-time { grid-column: 2; }
+}
+
+.orders-result-count { margin: 14px 0 0; color: var(--admin-muted); font-size: 12px; font-weight: 600; }
+
+/* Shared with admin pages: the audit/system-log filters use it too. */
+.history-filter-bar { align-items: flex-start; row-gap: 14px; }
+.history-filter-bar .search-box { order: 1; }
+.history-filter-bar .filter-actions { order: 2; }
+
+/* Role chip inside a feed row sits tighter than the users-table badge. */
+.audit-copy .role-badge { padding: 2px 7px; font-size: 9.5px; vertical-align: 1px; }

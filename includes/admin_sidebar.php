@@ -13,6 +13,7 @@ $navigation = [
     ],
     'system' => [
         ['logs', 'System Logs', 'activity'],
+        ['inventory-audit', 'Inventory Audit History', 'invhistory'],
         ['settings', 'Settings', 'settings'],
     ],
     'account' => [
@@ -30,6 +31,7 @@ $icons = [
     'chart' => '<i class="fa-solid fa-chart-line"></i>',
     'moments' => '<i class="fa-solid fa-camera-retro"></i>',
     'activity' => '<i class="fa-solid fa-clock-rotate-left"></i>',
+    'invhistory' => '<i class="fa-solid fa-box-open"></i>',
     'settings' => '<i class="fa-solid fa-gear"></i>',
     'profile' => '<i class="fa-solid fa-circle-user"></i>',
     'logout' => '<i class="fa-solid fa-right-from-bracket"></i>',

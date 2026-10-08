@@ -1,0 +1,11 @@
+# The webhook endpoint (xendit.php) and localhost-only test tools stay reachable;
+# only logs and notes are hidden from the web.
+<FilesMatch "\.(txt|log|md)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>

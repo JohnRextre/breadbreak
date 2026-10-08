@@ -1,19 +1,20 @@
 <?php
 /**
- * Staff Inventory History — every catalogue and stock change.
+ * Admin Inventory Audit History — every catalogue and stock change.
  *
- * staff/inventory.php shows what the catalogue looks like now; this is how it
+ * admin/inventory.php shows what the catalogue looks like now; this is how it
  * got there: items added/edited/deleted, prices and quantities adjusted, menus
- * and service sizes managed — who did it and when.
+ * and service sizes managed — who did it and when. Admin is read-only for
+ * inventory, so every row here was made by a staff account.
  */
 require_once __DIR__ . '/../includes/auth.php';
-requireRole('staff');
+requireRole('admin');
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../includes/inventory_log.php';
 
-$pageTitle = 'Inventory History';
-$activePage = 'inventory-history';
+$pageTitle = 'Inventory Audit History';
+$activePage = 'inventory-audit';
 
 $pdo = getDatabaseConnection();
 ensureInventoryActivityLog($pdo);
@@ -117,16 +118,15 @@ $kindLabels = [
     'stock' => 'stock changes',
 ];
 
-require __DIR__ . '/../includes/staff_header.php';
+require __DIR__ . '/../includes/admin_header.php';
 ?>
 
 <section class="page-intro users-page-intro inventory-page-intro">
     <div>
-        <span class="eyebrow">Audit Trail</span>
-        <h2>Inventory History</h2>
-        <p>Every item, menu and stock change — who made it and when.</p>
+        <h2>Inventory Audit History</h2>
+        <p>Every item, menu and stock change across the catalogue — who made it and when.</p>
     </div>
-    <a class="admin-button secondary" href="<?php echo BASE_URL; ?>/staff/inventory.php" style="height:44px; padding:0 20px; border-radius:999px; font-weight:800; display:inline-flex; align-items:center; gap:7px;">
+    <a class="admin-button secondary" href="<?php echo BASE_URL; ?>/admin/inventory.php" style="height:44px; padding:0 20px; border-radius:999px; font-weight:800; display:inline-flex; align-items:center; gap:7px;">
         <i class="fa-solid fa-boxes-stacked"></i> Open inventory
     </a>
 </section>
@@ -157,7 +157,7 @@ require __DIR__ . '/../includes/staff_header.php';
                 <i class="fa-solid fa-filter"></i> Apply
             </button>
             <?php if ($hasFilters): ?>
-                <a href="inventory-history.php" class="admin-button secondary" style="height:42px; border-radius:8px; padding:0 16px;">
+                <a href="inventory-audit.php" class="admin-button secondary" style="height:42px; border-radius:8px; padding:0 16px;">
                     <i class="fa-solid fa-rotate-left"></i> Reset
                 </a>
             <?php endif; ?>
@@ -207,4 +207,4 @@ require __DIR__ . '/../includes/staff_header.php';
     <?php endif; ?>
 </section>
 
-<?php require __DIR__ . '/../includes/staff_footer.php'; ?>
+<?php require __DIR__ . '/../includes/admin_footer.php'; ?>

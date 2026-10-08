@@ -33,8 +33,6 @@ if ($address === '' && ($reqLat === null || $reqLng === null)) {
     exit;
 }
 
-$pdo = getDatabaseConnection();
-
 // ── Load settings from DB ─────────────────────────────────────────────────────
 function getSetting(PDO $pdo, string $key, string $default = ''): string {
     $stmt = $pdo->prepare('SELECT setting_value FROM delivery_settings WHERE setting_key = :k LIMIT 1');
@@ -42,12 +40,22 @@ function getSetting(PDO $pdo, string $key, string $default = ''): string {
     return (string) ($stmt->fetchColumn() ?: $default);
 }
 
-$mode          = getSetting($pdo, 'delivery_mode', 'simple');
-$zonesJson     = getSetting($pdo, 'delivery_zones', '[]');
-$areasJson     = getSetting($pdo, 'in_range_areas', '[]');
-$branchLat     = (float) getSetting($pdo, 'branch_lat', '14.8310');
-$branchLng     = (float) getSetting($pdo, 'branch_lng', '120.8720');
-$maxDriveTime  = (int)   getSetting($pdo, 'max_drive_time_min', '25');
+try {
+    $pdo = getDatabaseConnection();
+    $mode          = getSetting($pdo, 'delivery_mode', 'simple');
+    $zonesJson     = getSetting($pdo, 'delivery_zones', '[]');
+    $areasJson     = getSetting($pdo, 'in_range_areas', '[]');
+    $branchLat     = (float) getSetting($pdo, 'branch_lat', '14.8310');
+    $branchLng     = (float) getSetting($pdo, 'branch_lng', '120.8720');
+    $maxDriveTime  = (int)   getSetting($pdo, 'max_drive_time_min', '25');
+} catch (Throwable $exception) {
+    // MySQL unreachable (restart window, remote host) — answer with clean JSON
+    // instead of an uncaught fatal HTML page.
+    error_log('check-address: settings load failed — ' . $exception->getMessage());
+    http_response_code(503);
+    echo json_encode(['error' => 'Delivery check is temporarily unavailable. Please try again in a moment.']);
+    exit;
+}
 
 $zones    = json_decode($zonesJson, true)  ?: [];
 $inAreas  = json_decode($areasJson, true)  ?: [];
@@ -116,14 +124,20 @@ function checkSimple(string $address, array $inAreas, array $zones): array {
 function geocodeNominatim(PDO $pdo, string $address): ?array {
     $hash = hash('sha256', mb_strtolower(trim($address)));
 
-    // Check 24-hr cache
-    $cacheStmt = $pdo->prepare(
-        "SELECT latitude, longitude, geocode_success, cached_at
-         FROM delivery_geocode_cache
-         WHERE address_hash = :h LIMIT 1"
-    );
-    $cacheStmt->execute(['h' => $hash]);
-    $cached = $cacheStmt->fetch();
+    // Check 24-hr cache — best-effort: if the connection can't be queried right
+    // now, treat it as a miss and geocode fresh rather than failing the request.
+    $cached = null;
+    try {
+        $cacheStmt = $pdo->prepare(
+            "SELECT latitude, longitude, geocode_success, cached_at
+             FROM delivery_geocode_cache
+             WHERE address_hash = :h LIMIT 1"
+        );
+        $cacheStmt->execute(['h' => $hash]);
+        $cached = $cacheStmt->fetch();
+    } catch (Throwable $exception) {
+        error_log('check-address: geocode cache read failed — ' . $exception->getMessage());
+    }
 
     if ($cached) {
         $age = time() - strtotime($cached['cached_at']);
@@ -155,17 +169,27 @@ function geocodeNominatim(PDO $pdo, string $address): ?array {
         $success = 1;
     }
 
-    // Upsert cache
-    $pdo->prepare(
-        "INSERT INTO delivery_geocode_cache
-             (address_hash, address_raw, latitude, longitude, geocode_success, cached_at)
-         VALUES (:h, :raw, :lat, :lng, :ok, NOW())
-         ON DUPLICATE KEY UPDATE
-             latitude = VALUES(latitude),
-             longitude = VALUES(longitude),
-             geocode_success = VALUES(geocode_success),
-             cached_at = NOW()"
-    )->execute(['h' => $hash, 'raw' => $address, 'lat' => $lat, 'lng' => $lng, 'ok' => $success]);
+    // Upsert cache — best-effort on a FRESH connection: the Nominatim call above
+    // can idle the original connection out (especially on remote MySQL hosts),
+    // and a cache miss must never break the response the customer waits for.
+    for ($attempt = 1; $attempt <= 2; $attempt++) {
+        try {
+            $writePdo = getDatabaseConnection();
+            $writePdo->prepare(
+                "INSERT INTO delivery_geocode_cache
+                     (address_hash, address_raw, latitude, longitude, geocode_success, cached_at)
+                 VALUES (:h, :raw, :lat, :lng, :ok, NOW())
+                 ON DUPLICATE KEY UPDATE
+                     latitude = VALUES(latitude),
+                     longitude = VALUES(longitude),
+                     geocode_success = VALUES(geocode_success),
+                     cached_at = NOW()"
+            )->execute(['h' => $hash, 'raw' => $address, 'lat' => $lat, 'lng' => $lng, 'ok' => $success]);
+            break;
+        } catch (Throwable $exception) {
+            error_log(sprintf('check-address: geocode cache write failed (attempt %d/2) — %s', $attempt, $exception->getMessage()));
+        }
+    }
 
     return $success ? ['lat' => $lat, 'lng' => $lng] : null;
 }

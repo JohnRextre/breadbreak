@@ -190,20 +190,20 @@ require __DIR__ . '/../includes/staff_header.php';
             </p>
         </div>
     <?php else: ?>
-        <div class="staff-activity-feed">
+        <div class="audit-feed">
             <?php foreach ($days as $day): ?>
-                <div class="staff-activity-day"><?php echo htmlspecialchars($day['label']); ?></div>
-                <ul class="staff-activity-list">
+                <div class="audit-day"><?php echo htmlspecialchars($day['label']); ?></div>
+                <ul class="audit-list">
                     <?php foreach ($day['items'] as $dayItem): $event = $dayItem['event']; ?>
-                        <li class="staff-activity-item">
-                            <span class="staff-activity-icon"><i class="fa-solid <?php echo $event['icon']; ?>"></i></span>
-                            <div class="staff-activity-copy">
+                        <li class="audit-item">
+                            <span class="audit-icon"><i class="fa-solid <?php echo $event['icon']; ?>"></i></span>
+                            <div class="audit-copy">
                                 <strong><?php echo htmlspecialchars($event['title']); ?></strong>
                                 <?php if (!empty($event['detail'])): ?>
                                     <small><?php echo htmlspecialchars($event['detail']); ?></small>
                                 <?php endif; ?>
                             </div>
-                            <time class="staff-activity-time"><?php echo htmlspecialchars($dayItem['time']); ?></time>
+                            <time class="audit-time"><?php echo htmlspecialchars($dayItem['time']); ?></time>
                         </li>
                     <?php endforeach; ?>
                 </ul>

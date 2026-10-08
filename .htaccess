@@ -1,0 +1,20 @@
+# BreadBreak — root hardening
+# No directory listings (index.php files still serve normally).
+Options -Indexes
+
+# Block git internals at the site root.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^\.git(/|$) - [F,L]
+</IfModule>
+
+# Never serve dotfiles (.gitignore, .env, editor backups…).
+<FilesMatch "^\.">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>

@@ -22,6 +22,9 @@ $show = array_key_exists($show, $showOptions) ? $show : '10';
 $page = max(1, (int) ($_GET['page'] ?? 1));
 $modal = '';
 $formData = [];
+// GET requests have no row selected — the password/status/delete modals below
+// render an initial hidden user_id from this default (JS overwrites it on open).
+$userId = 0;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
