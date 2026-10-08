@@ -493,6 +493,11 @@ select:focus {
     color: var(--auth-error);
 }
 
+.auth-modal.is-info .auth-modal-icon {
+    background: rgba(52, 120, 198, 0.12);
+    color: #3478c6;
+}
+
 .auth-modal h2 {
     margin: 0 0 0.5rem;
     font-size: 1.35rem;
@@ -534,6 +539,39 @@ select:focus {
 
 .auth-modal .auth-form {
     text-align: left;
+}
+
+.auth-modal-tips {
+    margin-top: 1.1rem;
+    padding: 0.85rem 1rem;
+    background: var(--auth-paper);
+    border: 1px solid var(--auth-border);
+    border-radius: 14px;
+    text-align: left;
+    font-size: 0.82rem;
+    color: var(--auth-muted);
+}
+
+.auth-modal-tips-title {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin: 0 0 0.5rem;
+    font-weight: 800;
+    color: var(--auth-brown-800);
+    font-size: 0.82rem;
+}
+
+.auth-modal-tips-title i {
+    color: var(--auth-warning);
+}
+
+.auth-modal-tips ul {
+    margin: 0;
+    padding-left: 1.1rem;
+    display: grid;
+    gap: 0.3rem;
+    line-height: 1.45;
 }
 
 .resend-reopen {

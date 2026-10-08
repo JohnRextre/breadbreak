@@ -8,6 +8,7 @@ $errors = [];
 $successMessage = '';
 $successTitle = '';
 $modalTone = 'success';
+$reopenLabel = 'Didn\'t see the verification email? Open the resend panel';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // ── Resend verification (from the success panel below) ──────────────────
@@ -91,7 +92,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $checkStmt->execute(['email' => $email]);
 
             if ($checkStmt->fetch()) {
-                $errors['email'] = 'This email is already registered.';
+                // Already registered — guide instead of a dead end. The modal
+                // offers Sign In plus the resend form; the wording stays generic
+                // so it never reveals whether the address is verified.
+                $successTitle = 'Already have an account?';
+                $successMessage = 'This email is already registered. If you just signed up, the confirmation email can take a few minutes — check your Spam, Junk, or Promotions folder, then resend it below. Already verified? Sign in to continue.';
+                $modalTone = 'info';
+                $reopenLabel = 'Already registered? Open sign-in and resend options';
             } else {
                 // Created UNVERIFIED — sign-in unlocks only after the email link is clicked.
                 $verificationToken = randomToken();
@@ -249,7 +256,7 @@ if ($showModal && $successTitle === '') {
 
                     <?php if ($showModal): ?>
                         <button type="button" class="resend-reopen" id="resendReopen" hidden>
-                            <i class="fa-solid fa-envelope-circle-check"></i> Didn't see the verification email? Open the resend panel
+                            <i class="fa-solid fa-envelope-circle-check"></i> <?php echo htmlspecialchars($reopenLabel); ?>
                         </button>
                     <?php endif; ?>
                 </form>
@@ -264,13 +271,17 @@ if ($showModal && $successTitle === '') {
 
     <?php if ($showModal): ?>
         <div class="auth-modal-overlay" id="authModalOverlay">
-            <div class="auth-modal<?php echo $modalTone === 'error' ? ' is-error' : ''; ?>" role="dialog" aria-modal="true" aria-labelledby="authModalTitle">
+            <div class="auth-modal<?php echo $modalTone === 'error' ? ' is-error' : ($modalTone === 'info' ? ' is-info' : ''); ?>" role="dialog" aria-modal="true" aria-labelledby="authModalTitle">
                 <button type="button" class="auth-modal-close" id="authModalClose" aria-label="Close dialog">
                     <i class="fa-solid fa-xmark"></i>
                 </button>
 
                 <div class="auth-modal-icon" aria-hidden="true">
-                    <i class="fa-solid <?php echo $modalTone === 'error' ? 'fa-triangle-exclamation' : 'fa-envelope-circle-check'; ?>"></i>
+                    <i class="fa-solid <?php
+                        echo $modalTone === 'error'
+                            ? 'fa-triangle-exclamation'
+                            : ($modalTone === 'info' ? 'fa-circle-info' : 'fa-envelope-circle-check');
+                    ?>"></i>
                 </div>
 
                 <h2 id="authModalTitle"><?php echo htmlspecialchars($successTitle); ?></h2>
@@ -297,6 +308,16 @@ if ($showModal && $successTitle === '') {
                     </div>
                     <button type="submit" class="auth-btn secondary-btn"><i class="fa-solid fa-envelope-circle-check"></i> Resend verification email</button>
                 </form>
+
+                <div class="auth-modal-tips">
+                    <p class="auth-modal-tips-title"><i class="fa-solid fa-lightbulb"></i> Email not arriving?</p>
+                    <ul>
+                        <li>Wait a minute — delivery isn't always instant.</li>
+                        <li>Check your Spam, Junk, and Promotions folders.</li>
+                        <li>Resend once every 60 seconds if it still hasn't arrived.</li>
+                        <li>Make sure the email address above is spelled correctly.</li>
+                    </ul>
+                </div>
             </div>
         </div>
     <?php endif; ?>
