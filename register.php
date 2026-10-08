@@ -6,6 +6,8 @@ require_once __DIR__ . '/includes/auth_tokens.php';
 $pageTitle = 'Create Account | BreadBreak';
 $errors = [];
 $successMessage = '';
+$successTitle = '';
+$modalTone = 'success';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // ── Resend verification (from the success panel below) ──────────────────
@@ -13,6 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $resendEmail = trim($_POST['email'] ?? '');
         if ($resendEmail === '' || !filter_var($resendEmail, FILTER_VALIDATE_EMAIL)) {
             $errors['resend'] = 'Please enter a valid email address.';
+            $modalTone = 'error';
         } else {
             try {
                 $pdo = getDatabaseConnection();
@@ -22,18 +25,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 if (!$resendUser || !emailIsUnverified($resendUser)) {
                     // Generic — never reveals whether the address exists or is already verified.
+                    $successTitle = 'Check your inbox';
                     $successMessage = 'If that email still needs verification, a new link is on its way. Check your inbox and spam folder.';
                 } elseif (($waitMessage = verificationResendBlocked($pdo, (int) $resendUser['id'])) !== null) {
                     $errors['resend'] = $waitMessage;
+                    $modalTone = 'error';
                 } else {
                     $token = issueEmailVerification($pdo, (int) $resendUser['id']);
                     $sent = sendVerificationEmail($resendUser['email'], (string) $resendUser['first_name'], appUrl('verify-email.php?token=' . $token));
+                    $successTitle = 'Check your inbox';
                     $successMessage = $sent
                         ? 'Verification email sent again — check your inbox and spam folder.'
                         : 'We couldn’t send the email right now. Please wait a minute and try Resend again.';
+                    if (!$sent) {
+                        $modalTone = 'error';
+                    }
                 }
             } catch (Throwable) {
                 $errors['resend'] = 'Unable to resend right now. Please try again in a moment.';
+                $modalTone = 'error';
             }
         }
     } else {
@@ -107,9 +117,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $firstName,
                     appUrl('verify-email.php?token=' . $verificationToken)
                 );
+                $successTitle = 'Account created!';
                 $successMessage = $verificationSent
-                    ? 'Account created! Check ' . $email . ' for your verification link — you can sign in once your email is verified.'
-                    : 'Account created, but we couldn’t send the verification email right now. Please wait a minute and use the Resend button below.';
+                    ? 'Check ' . $email . ' for your verification link — you can sign in once your email is verified.'
+                    : 'We couldn’t send the verification email right now. Please wait a minute and use the Resend button below.';
+                if (!$verificationSent) {
+                    $modalTone = 'error';
+                }
 
                 // Welcome treat: one-time Free Delivery voucher, valid 30 days.
                 try {
@@ -130,6 +144,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     } // end normal-registration branch
+}
+
+// The success / resend panel renders as a floating modal overlay.
+$showModal = !empty($successMessage) || isset($errors['resend']);
+if ($showModal && $successTitle === '') {
+    $successTitle = !empty($successMessage) ? 'Check your inbox' : 'Resend verification email';
 }
 ?>
 
@@ -227,30 +247,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </div>
                     <?php endif; ?>
 
-                    <?php if (!empty($successMessage)): ?>
-                        <div class="form-status success" aria-live="polite">
-                            <?php echo htmlspecialchars($successMessage); ?>
-                            <div class="form-actions-inline">
-                                <a href="/BreadBreak/login.php" class="auth-link inline">Sign In</a>
-                            </div>
-                        </div>
+                    <?php if ($showModal): ?>
+                        <button type="button" class="resend-reopen" id="resendReopen" hidden>
+                            <i class="fa-solid fa-envelope-circle-check"></i> Didn't see the verification email? Open the resend panel
+                        </button>
                     <?php endif; ?>
                 </form>
-
-                <?php if (!empty($successMessage)): ?>
-                    <form class="auth-form" method="POST" novalidate style="margin-top: 0.75rem;">
-                        <input type="hidden" name="resend_verification" value="1" />
-                        <div class="field-group">
-                            <label for="resend_email">Didn't see the email? Resend it:</label>
-                            <div class="input-wrap">
-                                <span class="input-icon"><i class="fa-solid fa-envelope"></i></span>
-                                <input id="resend_email" name="email" type="email" placeholder="Enter your email address" value="<?php echo htmlspecialchars(trim($_POST['email'] ?? '')); ?>" />
-                            </div>
-                            <div class="error-message" data-error-for="resend"><?php echo isset($errors['resend']) ? htmlspecialchars($errors['resend']) : ''; ?></div>
-                        </div>
-                        <button type="submit" class="auth-btn secondary-btn"><i class="fa-solid fa-envelope-circle-check"></i> Resend verification email</button>
-                    </form>
-                <?php endif; ?>
 
                 <div class="auth-footer">
                     <p>Already have an account?</p>
@@ -259,5 +261,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </main>
         </div>
     </div>
+
+    <?php if ($showModal): ?>
+        <div class="auth-modal-overlay" id="authModalOverlay">
+            <div class="auth-modal<?php echo $modalTone === 'error' ? ' is-error' : ''; ?>" role="dialog" aria-modal="true" aria-labelledby="authModalTitle">
+                <button type="button" class="auth-modal-close" id="authModalClose" aria-label="Close dialog">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+
+                <div class="auth-modal-icon" aria-hidden="true">
+                    <i class="fa-solid <?php echo $modalTone === 'error' ? 'fa-triangle-exclamation' : 'fa-envelope-circle-check'; ?>"></i>
+                </div>
+
+                <h2 id="authModalTitle"><?php echo htmlspecialchars($successTitle); ?></h2>
+
+                <?php if (!empty($successMessage)): ?>
+                    <p class="auth-modal-msg" aria-live="polite"><?php echo htmlspecialchars($successMessage); ?></p>
+                <?php endif; ?>
+
+                <?php if (!empty($successMessage)): ?>
+                    <a href="/BreadBreak/login.php" class="auth-btn primary-btn auth-modal-cta"><i class="fa-solid fa-right-to-bracket"></i> Sign In</a>
+                <?php endif; ?>
+
+                <div class="auth-modal-divider"><span>Didn't see the email? Resend it</span></div>
+
+                <form class="auth-form" method="POST" novalidate>
+                    <input type="hidden" name="resend_verification" value="1" />
+                    <div class="field-group">
+                        <label for="resend_email">Email Address</label>
+                        <div class="input-wrap">
+                            <span class="input-icon"><i class="fa-solid fa-envelope"></i></span>
+                            <input id="resend_email" name="email" type="email" placeholder="Enter your email address" value="<?php echo htmlspecialchars(trim($_POST['email'] ?? '')); ?>" />
+                        </div>
+                        <div class="error-message" data-error-for="resend"><?php echo isset($errors['resend']) ? htmlspecialchars($errors['resend']) : ''; ?></div>
+                    </div>
+                    <button type="submit" class="auth-btn secondary-btn"><i class="fa-solid fa-envelope-circle-check"></i> Resend verification email</button>
+                </form>
+            </div>
+        </div>
+    <?php endif; ?>
 </body>
 </html>

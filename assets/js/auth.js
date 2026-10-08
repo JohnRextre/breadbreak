@@ -198,4 +198,55 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         });
     });
+
+    // ── Floating success / resend modal (register page) ─────────────────────
+    const authOverlay = document.getElementById('authModalOverlay');
+    const resendReopen = document.getElementById('resendReopen');
+
+    if (authOverlay) {
+        const closeBtn = document.getElementById('authModalClose');
+
+        const setModalOpen = function (isOpen) {
+            authOverlay.classList.toggle('is-hidden', !isOpen);
+            document.body.style.overflow = isOpen ? 'hidden' : '';
+            if (resendReopen) {
+                resendReopen.hidden = isOpen;
+            }
+            if (isOpen && closeBtn) {
+                closeBtn.focus();
+            }
+        };
+
+        // The server renders the modal when there is a result to show.
+        setModalOpen(true);
+
+        if (closeBtn) {
+            closeBtn.addEventListener('click', function () {
+                setModalOpen(false);
+            });
+        }
+
+        // Clicking the dimmed backdrop also closes the panel.
+        authOverlay.addEventListener('click', function (event) {
+            if (event.target === authOverlay) {
+                setModalOpen(false);
+            }
+        });
+
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape' && !authOverlay.classList.contains('is-hidden')) {
+                setModalOpen(false);
+            }
+        });
+
+        if (resendReopen) {
+            resendReopen.addEventListener('click', function () {
+                setModalOpen(true);
+                const emailField = document.getElementById('resend_email');
+                if (emailField) {
+                    emailField.focus();
+                }
+            });
+        }
+    }
 });
