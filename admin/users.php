@@ -62,7 +62,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($check->fetch()) {
                 $errors['email'] = 'This email is already registered.';
             } else {
-                $insert = $pdo->prepare('INSERT INTO users (first_name, last_name, phone, email, password, role, status) VALUES (:first_name, :last_name, :phone, :email, :password, :role, :status)');
+                // Admin-created accounts are trusted — created already verified.
+                $insert = $pdo->prepare('INSERT INTO users (first_name, last_name, phone, email, password, role, status, email_verified_at) VALUES (:first_name, :last_name, :phone, :email, :password, :role, :status, NOW())');
                 $insert->execute([
                     'first_name' => $formData['first_name'], 'last_name' => $formData['last_name'],
                     'phone' => $formData['phone'], 'email' => $formData['email'],

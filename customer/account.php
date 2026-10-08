@@ -494,6 +494,8 @@ try {
 $activityLabels = [
     'login'            => ['Signed in', 'fa-right-to-bracket', ''],
     'logout'           => ['Signed out', 'fa-right-from-bracket', ''],
+    'email_verified'   => ['Email verified', 'fa-envelope-circle-check', 'tone-ok'],
+    'password_reset_requested' => ['Password reset requested', 'fa-key', ''],
     'password_changed' => ['Password changed', 'fa-lock', 'tone-accent'],
     'photo_updated'    => ['Profile photo updated', 'fa-camera', 'tone-accent'],
     'photo_removed'    => ['Profile photo removed', 'fa-camera', 'tone-accent'],

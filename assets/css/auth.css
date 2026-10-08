@@ -327,6 +327,12 @@ select:focus {
     box-shadow: 0 16px 26px rgba(91, 64, 51, 0.18);
 }
 
+.secondary-btn {
+    background: transparent;
+    color: var(--auth-brown-700);
+    border: 2px solid var(--auth-brown-700);
+}
+
 .auth-footer {
     display: flex;
     align-items: center;

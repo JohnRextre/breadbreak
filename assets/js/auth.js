@@ -152,17 +152,49 @@ document.addEventListener('DOMContentLoaded', function () {
             }
 
             if (formType === 'forgot-password') {
-                clearError('identifier');
-                const identifier = form.querySelector('[name="identifier"]');
+                clearError('email');
+                const email = form.querySelector('[name="email"]');
 
-                if (!identifier || identifier.value.trim() === '') {
-                    setError('identifier', 'Email or phone number is required.');
+                if (!email || email.value.trim() === '') {
+                    setError('email', 'Email address is required.');
+                } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim())) {
+                    setError('email', 'Please enter a valid email address.');
                 }
 
                 if (isValid) {
                     form.submit();
                     return;
                 }
+            }
+
+            if (formType === 'reset-password') {
+                clearError('password');
+                clearError('confirm_password');
+                const password = form.querySelector('[name="password"]');
+                const confirmPassword = form.querySelector('[name="confirm_password"]');
+
+                if (!password || password.value.trim() === '') {
+                    setError('password', 'Password is required.');
+                } else if (password.value.trim().length < 8) {
+                    setError('password', 'Password must be at least 8 characters long.');
+                }
+
+                if (!confirmPassword || confirmPassword.value.trim() === '') {
+                    setError('confirm_password', 'Please confirm your new password.');
+                } else if (password && confirmPassword.value !== password.value) {
+                    setError('confirm_password', 'Passwords do not match.');
+                }
+
+                if (isValid) {
+                    form.submit();
+                    return;
+                }
+            }
+
+            // Forms without a data-form-type (resend / confirm buttons) have no
+            // client rules — reaching here still valid means "let it submit".
+            if (isValid) {
+                form.submit();
             }
         });
     });

@@ -1,5 +1,7 @@
 <?php
 require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/mailer.php';
+require_once __DIR__ . '/includes/auth_tokens.php';
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -27,6 +29,23 @@ $pageTitle = 'Sign In | BreadBreak';
 $errors = [];
 $successMessage = ($_GET['logged_out'] ?? '') === '1' ? 'You have been logged out.' : '';
 $selectedAccountType = $_POST['account_type'] ?? '';
+$showResendForm = false;
+
+// Post-redirect states from the "resend verification" action (PRG).
+$resentState = (string) ($_GET['resent'] ?? '');
+if ($resentState === '1') {
+    $successMessage = 'Verification email sent — check your inbox and spam folder.';
+    $showResendForm = true;
+} elseif ($resentState === 'wait') {
+    $successMessage = 'We just sent a link — please wait a minute before requesting another one.';
+    $showResendForm = true;
+} elseif ($resentState === 'failed') {
+    $successMessage = 'We couldn’t send the email right now — please wait a minute and try again.';
+    $showResendForm = true;
+} elseif ($resentState === 'sent') {
+    $successMessage = 'If that email still needs verification, a new link is on its way.';
+    $showResendForm = true;
+}
 
 // Optional return target set by the cart / checkout / heart-tap pages.
 $allowedRedirects = ['cart', 'checkout', 'favorites', 'discount-ids', 'moments'];
@@ -36,6 +55,37 @@ if (!is_string($redirectTarget) || !in_array($redirectTarget, $allowedRedirects,
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // ── Resend verification email (shown when sign-in is blocked as unverified) ──
+    if (($_POST['resend_verification'] ?? '') === '1') {
+        $resendIdentifier = trim($_POST['identifier'] ?? '');
+        $resentState = 'sent';
+        if ($resendIdentifier !== '') {
+            try {
+                $pdo = getDatabaseConnection();
+                $resendStmt = $pdo->prepare('SELECT id, first_name, email, email_verified_at FROM users WHERE email = :email OR phone = :phone LIMIT 1');
+                $resendStmt->execute(['email' => $resendIdentifier, 'phone' => $resendIdentifier]);
+                $resendUser = $resendStmt->fetch();
+
+                if ($resendUser && emailIsUnverified($resendUser)) {
+                    if (verificationResendBlocked($pdo, (int) $resendUser['id']) !== null) {
+                        $resentState = 'wait';
+                    } else {
+                        $token = issueEmailVerification($pdo, (int) $resendUser['id']);
+                        $resentState = sendVerificationEmail($resendUser['email'], (string) $resendUser['first_name'], appUrl('verify-email.php?token=' . $token))
+                            ? '1'
+                            : 'failed';
+                    }
+                }
+            } catch (Throwable) {
+                $resentState = 'sent';
+            }
+        }
+        // Keep the typed identifier across the redirect (PRG) so the resend form survives.
+        $_SESSION['resend_identifier'] = $resendIdentifier;
+        header('Location: /BreadBreak/login.php?resent=' . $resentState);
+        exit;
+    }
+
     $accountType = trim($_POST['account_type'] ?? '');
     $identifier = trim($_POST['identifier'] ?? '');
     $password = trim($_POST['password'] ?? '');
@@ -78,6 +128,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } elseif (($user['status'] ?? 'active') !== 'active') {
                     $reason = trim((string) ($user['status_reason'] ?? ''));
                     $errors['password'] = 'This account has been deactivated.' . ($reason !== '' ? ' Reason: ' . $reason : ' Please contact an administrator.');
+                } elseif (emailIsUnverified($user)) {
+                    $errors['password'] = 'Your email address hasn’t been verified yet. Check your inbox for the verification link, or resend it below.';
+                    $showResendForm = true;
                 } else {
                     session_regenerate_id(true);
                     $_SESSION['user_id'] = (int) $user['id'];
@@ -250,6 +303,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <button type="submit" class="auth-btn primary-btn"><i class="fa-solid fa-right-to-bracket"></i> Sign In</button>
 
                 </form>
+
+                <?php if ($showResendForm): ?>
+                    <form class="auth-form" method="POST" novalidate style="margin-top: 0.75rem;">
+                        <input type="hidden" name="resend_verification" value="1" />
+                        <input type="hidden" name="identifier" value="<?php echo htmlspecialchars(trim($_POST['identifier'] ?? $_SESSION['resend_identifier'] ?? '')); ?>" />
+                        <div class="field-group">
+                            <label for="resend_identifier">Resend verification email:</label>
+                            <div class="input-wrap">
+                                <span class="input-icon"><i class="fa-solid fa-envelope"></i></span>
+                                <input id="resend_identifier" type="text" value="<?php echo htmlspecialchars(trim($_POST['identifier'] ?? $_SESSION['resend_identifier'] ?? '')); ?>" readonly aria-label="Verification email recipient" />
+                            </div>
+                        </div>
+                        <button type="submit" class="auth-btn secondary-btn"><i class="fa-solid fa-envelope-circle-check"></i> Resend verification email</button>
+                    </form>
+                <?php endif; ?>
 
                 <div class="auth-footer">
                     <p>Don't have an account?</p>

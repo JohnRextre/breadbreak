@@ -1,11 +1,42 @@
 <?php
 require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/mailer.php';
+require_once __DIR__ . '/includes/auth_tokens.php';
 
 $pageTitle = 'Create Account | BreadBreak';
 $errors = [];
 $successMessage = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // ── Resend verification (from the success panel below) ──────────────────
+    if (($_POST['resend_verification'] ?? '') === '1') {
+        $resendEmail = trim($_POST['email'] ?? '');
+        if ($resendEmail === '' || !filter_var($resendEmail, FILTER_VALIDATE_EMAIL)) {
+            $errors['resend'] = 'Please enter a valid email address.';
+        } else {
+            try {
+                $pdo = getDatabaseConnection();
+                $resendStmt = $pdo->prepare('SELECT id, first_name, email, email_verified_at FROM users WHERE email = :email LIMIT 1');
+                $resendStmt->execute(['email' => $resendEmail]);
+                $resendUser = $resendStmt->fetch();
+
+                if (!$resendUser || !emailIsUnverified($resendUser)) {
+                    // Generic — never reveals whether the address exists or is already verified.
+                    $successMessage = 'If that email still needs verification, a new link is on its way. Check your inbox and spam folder.';
+                } elseif (($waitMessage = verificationResendBlocked($pdo, (int) $resendUser['id'])) !== null) {
+                    $errors['resend'] = $waitMessage;
+                } else {
+                    $token = issueEmailVerification($pdo, (int) $resendUser['id']);
+                    $sent = sendVerificationEmail($resendUser['email'], (string) $resendUser['first_name'], appUrl('verify-email.php?token=' . $token));
+                    $successMessage = $sent
+                        ? 'Verification email sent again — check your inbox and spam folder.'
+                        : 'We couldn’t send the email right now. Please wait a minute and try Resend again.';
+                }
+            } catch (Throwable) {
+                $errors['resend'] = 'Unable to resend right now. Please try again in a moment.';
+            }
+        }
+    } else {
     $firstName = trim($_POST['first_name'] ?? '');
     $lastName = trim($_POST['last_name'] ?? '');
     $phone = trim($_POST['phone'] ?? '');
@@ -52,7 +83,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($checkStmt->fetch()) {
                 $errors['email'] = 'This email is already registered.';
             } else {
-                $insertStmt = $pdo->prepare('INSERT INTO users (first_name, last_name, phone, email, password, role, status) VALUES (:first_name, :last_name, :phone, :email, :password, :role, :status)');
+                // Created UNVERIFIED — sign-in unlocks only after the email link is clicked.
+                $verificationToken = randomToken();
+                $insertStmt = $pdo->prepare(
+                    'INSERT INTO users (first_name, last_name, phone, email, password, role, status,
+                                        verification_token_hash, verification_expires_at, verification_sent_at)
+                     VALUES (:first_name, :last_name, :phone, :email, :password, :role, :status,
+                             :token_hash, DATE_ADD(NOW(), INTERVAL 24 HOUR), NOW())'
+                );
                 $insertStmt->execute([
                     'first_name' => $firstName,
                     'last_name' => $lastName,
@@ -61,9 +99,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'password' => password_hash($password, PASSWORD_DEFAULT),
                     'role' => 'customer',
                     'status' => 'active',
+                    'token_hash' => hashToken($verificationToken),
                 ]);
 
-                $successMessage = 'Account created successfully!';
+                $verificationSent = sendVerificationEmail(
+                    $email,
+                    $firstName,
+                    appUrl('verify-email.php?token=' . $verificationToken)
+                );
+                $successMessage = $verificationSent
+                    ? 'Account created! Check ' . $email . ' for your verification link — you can sign in once your email is verified.'
+                    : 'Account created, but we couldn’t send the verification email right now. Please wait a minute and use the Resend button below.';
 
                 // Welcome treat: one-time Free Delivery voucher, valid 30 days.
                 try {
@@ -72,7 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($newCustomerId > 0) {
                         $welcomeVoucherId = ensureWelcomeVoucher($pdo);
                         if (grantVoucherToCustomer($pdo, $welcomeVoucherId, $newCustomerId, 'welcome', date('Y-m-d H:i:s', strtotime('+30 days')))) {
-                            $successMessage = 'Account created successfully! You also received a FREE DELIVERY welcome voucher — valid for 30 days on your first order.';
+                            $successMessage .= ' You also received a FREE DELIVERY welcome voucher — valid for 30 days on your first order.';
                         }
                     }
                 } catch (Throwable) {
@@ -83,6 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors['database'] = 'Unable to create the account right now.';
         }
     }
+    } // end normal-registration branch
 }
 ?>
 
@@ -189,6 +236,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </div>
                     <?php endif; ?>
                 </form>
+
+                <?php if (!empty($successMessage)): ?>
+                    <form class="auth-form" method="POST" novalidate style="margin-top: 0.75rem;">
+                        <input type="hidden" name="resend_verification" value="1" />
+                        <div class="field-group">
+                            <label for="resend_email">Didn't see the email? Resend it:</label>
+                            <div class="input-wrap">
+                                <span class="input-icon"><i class="fa-solid fa-envelope"></i></span>
+                                <input id="resend_email" name="email" type="email" placeholder="Enter your email address" value="<?php echo htmlspecialchars(trim($_POST['email'] ?? '')); ?>" />
+                            </div>
+                            <div class="error-message" data-error-for="resend"><?php echo isset($errors['resend']) ? htmlspecialchars($errors['resend']) : ''; ?></div>
+                        </div>
+                        <button type="submit" class="auth-btn secondary-btn"><i class="fa-solid fa-envelope-circle-check"></i> Resend verification email</button>
+                    </form>
+                <?php endif; ?>
 
                 <div class="auth-footer">
                     <p>Already have an account?</p>

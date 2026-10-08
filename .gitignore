@@ -2,6 +2,12 @@
 webhook/webhook_log.txt
 *.log
 
+# Per-install production overrides (never commit real credentials)
+config/local.php
+
+# Test emails written by the file-outbox mailer
+storage/outbox/
+
 # OS generated files
 .DS_Store
 Thumbs.db

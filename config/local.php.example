@@ -1,0 +1,48 @@
+<?php
+/**
+ * Per-install overrides — copy to config/local.php (gitignored) and edit.
+ *
+ * Every section is optional: anything you leave out falls back to the
+ * defaults in config/database.php (env vars), config/mailer.php (file
+ * outbox), config/app.php (request-derived host) and config/xendit.php.
+ *
+ * Used for the InfinityFree deployment — shared hosts can't set env vars,
+ * so credentials live in this file instead.
+ */
+return [
+    // MySQL on the hosting account (InfinityFree → Client Area → Databases).
+    'db' => [
+        'host' => 'sql###.infinityfree.com',
+        'name' => 'if0_########_breadbreak',
+        'user' => 'if0_########',
+        'password' => '',
+    ],
+
+    // Gmail SMTP — Google Account → 2-Step Verification → App passwords.
+    // Leave smtp_host empty to keep using the storage/outbox/ file mailer.
+    'mail' => [
+        'smtp_host' => 'smtp.gmail.com',
+        'smtp_port' => 587,
+        'smtp_username' => 'you@gmail.com',
+        'smtp_password' => 'xxxx xxxx xxxx xxxx',
+        'from_address' => 'you@gmail.com',
+        'from_name' => 'BreadBreak',
+    ],
+
+    // Absolute site URL — used for verification / password-reset links.
+    'app' => [
+        'base_url' => 'https://your-site.infinityfreeapp.com/BreadBreak',
+    ],
+
+    // Xendit production credentials + webhook (Phase 3 — rotate everything
+    // that was ever used locally; the local webhook secret was committed).
+    'xendit' => [
+        'webhook_token' => 'long-random-string-here',
+        'public_key' => '',
+        'secret_key' => '',
+        'webhook_base_url' => 'https://your-site.infinityfreeapp.com/BreadBreak/webhook',
+        'return_success_url' => 'https://your-site.infinityfreeapp.com/BreadBreak/payment-success.php',
+        'return_failure_url' => 'https://your-site.infinityfreeapp.com/BreadBreak/payment-failed.php',
+        'env' => 'production',
+    ],
+];

@@ -69,7 +69,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$adminConfigured) {
             if ($existingUser->fetch()) {
                 $errors['email'] = 'This email is already registered.';
             } else {
-                $stmt = $pdo->prepare('INSERT INTO users (first_name, last_name, phone, email, password, role, status) VALUES (:first_name, :last_name, :phone, :email, :password, :role, :status)');
+                // The bootstrap admin is created in person — no email round-trip.
+                $stmt = $pdo->prepare('INSERT INTO users (first_name, last_name, phone, email, password, role, status, email_verified_at) VALUES (:first_name, :last_name, :phone, :email, :password, :role, :status, NOW())');
                 $stmt->execute([
                     'first_name' => $firstName,
                     'last_name' => $lastName,

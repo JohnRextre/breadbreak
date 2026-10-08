@@ -1,17 +1,53 @@
 <?php
+require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/mailer.php';
+require_once __DIR__ . '/includes/auth_tokens.php';
+
 $pageTitle = 'Forgot Password | BreadBreak';
 $errors = [];
 $successMessage = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $identifier = trim($_POST['identifier'] ?? '');
+    $email = trim($_POST['email'] ?? '');
 
-    if ($identifier === '') {
-        $errors['identifier'] = 'Email or phone number is required.';
+    if ($email === '') {
+        $errors['email'] = 'Email address is required.';
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $errors['email'] = 'Please enter a valid email address.';
     }
 
     if (empty($errors)) {
-        $successMessage = 'Password recovery will be implemented in a later phase.';
+        // Identical outcome whether or not the account exists — never leaks
+        // which addresses are registered.
+        $successMessage = 'If an account exists for that email, we’ve sent a password reset link. Check your inbox and spam folder.';
+
+        try {
+            $pdo = getDatabaseConnection();
+            $resetStmt = $pdo->prepare('SELECT id, first_name, email FROM users WHERE email = :email LIMIT 1');
+            $resetStmt->execute(['email' => $email]);
+            $resetUser = $resetStmt->fetch();
+
+            if ($resetUser) {
+                $result = issuePasswordReset($pdo, (int) $resetUser['id'], $_SERVER['REMOTE_ADDR'] ?? null);
+
+                if ($result['sent'] && $result['token'] !== null) {
+                    $sent = sendPasswordResetEmail(
+                        $resetUser['email'],
+                        (string) $resetUser['first_name'],
+                        appUrl('reset-password.php?token=' . $result['token'])
+                    );
+
+                    if ($sent) {
+                        require_once __DIR__ . '/includes/activity_log.php';
+                        logUserActivity($pdo, (int) $resetUser['id'], 'password_reset_requested', 'Reset link sent to email');
+                    }
+                } else {
+                    error_log('forgot-password: reset not sent for user ' . $resetUser['id'] . ' (' . ($result['reason'] ?? 'unknown') . ')');
+                }
+            }
+        } catch (Throwable $exception) {
+            error_log('forgot-password: ' . $exception->getMessage());
+        }
     }
 }
 ?>
@@ -49,23 +85,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="auth-heading">
                     <span class="eyebrow text-accent">Need Help?</span>
                     <h1>Forgot Your Password?</h1>
-                    <p>Enter your email or phone number and we'll help you recover your account.</p>
+                    <p>Enter your email address and we'll send you a link to set a new password.</p>
                 </div>
 
                 <form class="auth-form" method="POST" novalidate data-form-type="forgot-password">
                     <div class="field-group">
-                        <label for="identifier">Email or Phone Number</label>
+                        <label for="email">Email Address</label>
                         <div class="input-wrap">
                             <span class="input-icon" aria-hidden="true"><i class="fa-solid fa-envelope"></i></span>
-                            <input id="identifier" name="identifier" type="text" placeholder="Enter your email or phone number" value="<?php echo isset($_POST['identifier']) ? htmlspecialchars($_POST['identifier']) : ''; ?>" aria-invalid="false" />
+                            <input id="email" name="email" type="email" placeholder="Enter your email address" value="<?php echo isset($_POST['email']) ? htmlspecialchars($_POST['email']) : ''; ?>" aria-invalid="false" />
                         </div>
-                        <div class="error-message" data-error-for="identifier"><?php echo isset($errors['identifier']) ? htmlspecialchars($errors['identifier']) : ''; ?></div>
+                        <div class="error-message" data-error-for="email"><?php echo isset($errors['email']) ? htmlspecialchars($errors['email']) : ''; ?></div>
                     </div>
 
-                    <button type="submit" class="auth-btn primary-btn"><i class="fa-solid fa-arrow-right"></i> Continue</button>
+                    <button type="submit" class="auth-btn primary-btn"><i class="fa-solid fa-paper-plane"></i> Send reset link</button>
 
                     <?php if (!empty($successMessage)): ?>
-                        <div class="form-status success" aria-live="polite">
+                        <div class="form-status success" role="status">
                             <?php echo htmlspecialchars($successMessage); ?>
                         </div>
                     <?php endif; ?>

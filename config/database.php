@@ -17,12 +17,39 @@ const APP_UTC_OFFSET = '+08:00';
 
 date_default_timezone_set(APP_TIMEZONE);
 
+/**
+ * Optional per-install overrides from config/local.php (gitignored).
+ *
+ * Production hosts (InfinityFree) can't set environment variables, so a local
+ * file returning an array of sections — db, mail, app, xendit — is the
+ * supported way to point an existing checkout at another server. When the
+ * file is absent, every consumer falls back to env vars / defaults.
+ */
+function localConfig(string $section = ''): array
+{
+    static $local = null;
+    if ($local === null) {
+        $loaded = [];
+        if (is_file(__DIR__ . '/local.php')) {
+            try {
+                $loaded = require __DIR__ . '/local.php';
+            } catch (Throwable) {
+                $loaded = [];
+            }
+        }
+        $local = is_array($loaded) ? $loaded : [];
+    }
+
+    return $section === '' ? $local : (is_array($local[$section] ?? null) ? $local[$section] : []);
+}
+
 function getDatabaseConnection(): PDO
 {
-    $host = getenv('DB_HOST') ?: 'localhost';
-    $database = getenv('DB_NAME') ?: 'breadbreak_db';
-    $username = getenv('DB_USER') ?: 'root';
-    $password = getenv('DB_PASSWORD') ?: '';
+    $dbConfig = localConfig('db');
+    $host = $dbConfig['host'] ?? (getenv('DB_HOST') ?: 'localhost');
+    $database = $dbConfig['name'] ?? (getenv('DB_NAME') ?: 'breadbreak_db');
+    $username = $dbConfig['user'] ?? (getenv('DB_USER') ?: 'root');
+    $password = $dbConfig['password'] ?? (getenv('DB_PASSWORD') ?: '');
 
     $dsn = 'mysql:host=' . $host . ';dbname=' . $database . ';charset=utf8mb4';
 
