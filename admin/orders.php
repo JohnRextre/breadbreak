@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/auth.php';
 requireRole('admin');
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/order_status.php';
 
 $pageTitle = 'Orders Monitoring';
 $activePage = 'orders';
@@ -13,13 +14,20 @@ $pdo = getDatabaseConnection();
 $search = trim($_GET['search'] ?? '');
 $statusFilter = trim($_GET['status'] ?? 'all');
 
-$query = "SELECT o.id, o.reference_id, o.status AS order_status, o.created_at,
-                 o.fulfillment_type, o.delivery_fee, o.delivery_address, o.discount_type, o.discount_amount, o.discount_id_number, o.discount_name,
+$query = "SELECT o.id, o.reference_id, o.status AS order_status, o.created_at, o.updated_at,
+                 o.fulfillment_type, o.delivery_fee, o.delivery_address, o.delivery_landmark, o.delivery_notes,
+                 o.discount_type, o.discount_amount, o.discount_id_number, o.discount_name,
                  o.voucher_code, o.voucher_discount,
+                 o.subtotal, o.vatable_sales, o.vat_amount, o.vat_exempt_sales, o.total_amount,
+                 o.notes, o.payment_method AS order_payment_method, o.cash_amount,
+                 o.collected_amount, o.collected_at, o.proof_captured_at, o.proof_note,
                  u.first_name, u.last_name, u.email, u.phone,
-                 p.amount, p.payment_method, p.payment_channel, p.status AS payment_status
+                 r.first_name AS rider_first, r.last_name AS rider_last, r.phone AS rider_phone,
+                 p.amount, p.payment_method, p.payment_channel, p.status AS payment_status,
+                 p.reference_id AS payment_reference, p.created_at AS payment_created_at
           FROM orders o
           JOIN users u ON u.id = o.customer_id
+          LEFT JOIN users r ON r.id = o.rider_id
           LEFT JOIN payments p ON p.order_id = o.id
           WHERE 1=1";
 
@@ -70,6 +78,17 @@ $totalOrders = (int) $pdo->query("SELECT COUNT(*) FROM orders")->fetchColumn();
 $totalSales = (float) $pdo->query("SELECT SUM(amount) FROM payments WHERE status = 'paid'")->fetchColumn();
 $processingOrders = (int) $pdo->query("SELECT COUNT(*) FROM orders WHERE status = 'processing'")->fetchColumn();
 $completedOrders = (int) $pdo->query("SELECT COUNT(*) FROM orders WHERE status = 'completed'")->fetchColumn();
+
+// Status history (audit trail) shown in the detail modal. Never break the list
+// page if the audit table is unavailable on this install.
+$historyMap = [];
+if (!empty($orders)) {
+    try {
+        $historyMap = orderStatusHistoryMap($pdo, $orders);
+    } catch (Throwable $e) {
+        $historyMap = [];
+    }
+}
 
 require __DIR__ . '/../includes/admin_header.php';
 ?>
@@ -165,18 +184,19 @@ require __DIR__ . '/../includes/admin_header.php';
                     <tr>
                         <th style="min-width: 170px;">Order Reference</th>
                         <th style="min-width: 170px;">Customer</th>
-                        <th style="min-width: 260px;">Purchased Items</th>
+                        <th style="min-width: 220px;">Purchased Items</th>
                         <th style="min-width: 130px;">Total Amount</th>
-                        <th style="min-width: 130px;">Payment</th>
                         <th style="min-width: 130px;">Order Status</th>
+                        <th style="min-width: 140px;">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php foreach ($orders as $o):
                         $oid = (int) $o['id'];
                         $items = $orderItemsMap[$oid] ?? [];
-                        $payStatus = strtolower((string) ($o['payment_status'] ?? 'pending'));
                         $ordStatus = strtolower((string) $o['order_status']);
+                        $rowPayLabel = orderPaymentLabel($o['order_payment_method'] ?? null, $o['payment_channel'] ?? null, $o['fulfillment_type'] ?? 'delivery');
+                        $rowIsCash = orderIsCashPayment($o['order_payment_method'] ?? null, $o['payment_channel'] ?? null);
                     ?>
                     <tr>
                         <td>
@@ -234,18 +254,9 @@ require __DIR__ . '/../includes/admin_header.php';
                                     <i class="fa-solid fa-ticket" style="font-size: 9px;"></i> <?php echo htmlspecialchars($o['voucher_code']); ?>
                                 </small>
                             <?php endif; ?>
-                            <span class="order-pay-channel">
-                                <i class="fa-solid fa-mobile-screen"></i> GCash
+                            <span class="order-pay-channel <?php echo $rowIsCash ? 'is-cash' : ''; ?>">
+                                <i class="fa-solid <?php echo $rowIsCash ? 'fa-money-bill-wave' : 'fa-mobile-screen'; ?>"></i> <?php echo htmlspecialchars($rowPayLabel); ?>
                             </span>
-                        </td>
-                        <td>
-                            <?php if ($payStatus === 'paid'): ?>
-                                <span class="status-chip is-paid"><i class="fa-solid fa-circle-check"></i> Paid</span>
-                            <?php elseif ($payStatus === 'failed'): ?>
-                                <span class="status-chip is-failed"><i class="fa-solid fa-circle-xmark"></i> Failed</span>
-                            <?php else: ?>
-                                <span class="status-chip is-pending"><i class="fa-solid fa-clock"></i> Pending</span>
-                            <?php endif; ?>
                         </td>
                         <td>
                             <?php if ($ordStatus === 'processing'): ?>
@@ -258,6 +269,13 @@ require __DIR__ . '/../includes/admin_header.php';
                                 <span class="status-chip is-pending"><i class="fa-solid fa-hourglass-half"></i> Pending</span>
                             <?php endif; ?>
                         </td>
+                        <td>
+                            <button class="admin-button secondary order-view-btn" type="button"
+                                    data-open-modal="order-detail-<?php echo $oid; ?>"
+                                    aria-haspopup="dialog" title="View full order details">
+                                <i class="fa-solid fa-eye"></i> View Details
+                            </button>
+                        </td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
@@ -265,5 +283,252 @@ require __DIR__ . '/../includes/admin_header.php';
         </div>
     <?php endif; ?>
 </section>
+
+<?php if (!empty($orders)): ?>
+<?php foreach ($orders as $o):
+    $oid = (int) $o['id'];
+    $dItems = $orderItemsMap[$oid] ?? [];
+    $trail = $historyMap[$oid] ?? [];
+    $ordStatus = strtolower((string) $o['order_status']);
+    $fulfillment = $o['fulfillment_type'] ?? 'delivery';
+    $isPickup = $fulfillment === 'pickup';
+    $chip = orderStatusChip($ordStatus, $fulfillment);
+    $payStatus = strtolower((string) ($o['payment_status'] ?? 'pending'));
+    $payLabel = orderPaymentLabel($o['order_payment_method'] ?? null, $o['payment_channel'] ?? null, $fulfillment);
+    $isCash = orderIsCashPayment($o['order_payment_method'] ?? null, $o['payment_channel'] ?? null);
+    $customerName = trim($o['first_name'] . ' ' . $o['last_name']);
+    $riderName = trim(($o['rider_first'] ?? '') . ' ' . ($o['rider_last'] ?? ''));
+    $orderTotal = (float) ($o['total_amount'] ?? 0);
+    $proofUrl = BASE_URL . '/api/delivery-proof.php?order=' . $oid;
+?>
+<div class="admin-modal admin-order-modal" id="order-detail-<?php echo $oid; ?>" role="dialog" aria-modal="true" aria-labelledby="order-detail-title-<?php echo $oid; ?>">
+    <div class="modal-heading">
+        <div>
+            <span class="modal-kicker">Order Details</span>
+            <h2 id="order-detail-title-<?php echo $oid; ?>">#<?php echo htmlspecialchars($o['reference_id']); ?></h2>
+            <p class="order-detail-sub">
+                <i class="fa-regular fa-calendar"></i> <?php echo date('M d, Y · g:i A', strtotime($o['created_at'])); ?>
+                &middot; Last updated <?php echo date('M d, Y g:i A', strtotime($o['updated_at'])); ?>
+            </p>
+        </div>
+        <button class="modal-close" type="button" data-close-modal aria-label="Close">&times;</button>
+    </div>
+
+    <div class="order-detail-statusbar">
+        <span class="status-chip <?php echo $chip[0]; ?>"><i class="fa-solid fa-<?php echo $chip[1]; ?>"></i> <?php echo $chip[2]; ?></span>
+        <?php if ($payStatus === 'paid'): ?>
+            <span class="status-chip is-paid"><i class="fa-solid fa-circle-check"></i> Paid</span>
+        <?php elseif (in_array($payStatus, ['failed', 'expired', 'voided'], true)): ?>
+            <span class="status-chip is-failed"><i class="fa-solid fa-circle-xmark"></i> <?php echo ucfirst($payStatus); ?></span>
+        <?php else: ?>
+            <span class="status-chip is-pending"><i class="fa-solid fa-clock"></i> Pending</span>
+        <?php endif; ?>
+        <span class="order-detail-tag"><i class="fa-solid <?php echo $isPickup ? 'fa-store' : 'fa-truck'; ?>"></i> <?php echo $isPickup ? 'Store Pickup' : 'Delivery'; ?></span>
+        <span class="order-detail-tag"><i class="fa-solid fa-mobile-screen"></i> <?php echo htmlspecialchars($payLabel); ?></span>
+    </div>
+
+    <div class="order-detail-grid">
+        <section class="order-detail-card">
+            <h4 class="order-detail-card-title"><i class="fa-solid fa-user"></i> Customer</h4>
+            <dl class="order-detail-fields">
+                <div><dt>Name</dt><dd><?php echo htmlspecialchars($customerName); ?></dd></div>
+                <div><dt>Email</dt><dd><?php echo htmlspecialchars($o['email']); ?></dd></div>
+                <div><dt>Phone</dt><dd><a href="tel:<?php echo htmlspecialchars($o['phone']); ?>"><?php echo htmlspecialchars($o['phone']); ?></a></dd></div>
+                <?php if (!empty($o['discount_type']) && $o['discount_type'] !== 'none' && (float) $o['discount_amount'] > 0): ?>
+                    <div>
+                        <dt>Discount claimed</dt>
+                        <dd>
+                            <?php echo $o['discount_type'] === 'senior' ? '🧓 Senior Citizen 20%' : '♿ PWD 20%'; ?>
+                            <?php if (!empty($o['discount_id_number'])): ?>
+                                <small class="order-detail-note">ID <?php echo htmlspecialchars($o['discount_id_number']); ?><?php echo !empty($o['discount_name']) ? ' · ' . htmlspecialchars($o['discount_name']) : ''; ?></small>
+                            <?php endif; ?>
+                        </dd>
+                    </div>
+                <?php endif; ?>
+            </dl>
+        </section>
+
+        <section class="order-detail-card">
+            <h4 class="order-detail-card-title"><i class="fa-solid <?php echo $isPickup ? 'fa-store' : 'fa-truck'; ?>"></i> <?php echo $isPickup ? 'Pickup' : 'Delivery'; ?></h4>
+            <dl class="order-detail-fields">
+                <?php if ($isPickup): ?>
+                    <div><dt>Handover</dt><dd>Customer picks up at BreadBreak Bakery</dd></div>
+                <?php else: ?>
+                    <?php if (!empty($o['delivery_address'])): ?>
+                        <div class="is-wide">
+                            <dt>Address</dt>
+                            <dd>
+                                <?php echo nl2br(htmlspecialchars($o['delivery_address'])); ?>
+                                <a class="order-detail-link" href="https://www.google.com/maps/search/?api=1&amp;query=<?php echo urlencode((string) $o['delivery_address']); ?>" target="_blank" rel="noopener"><i class="fa-solid fa-map"></i> Open in Maps</a>
+                            </dd>
+                        </div>
+                    <?php endif; ?>
+                    <?php if (!empty($o['delivery_landmark'])): ?>
+                        <div><dt>Landmark</dt><dd><?php echo htmlspecialchars($o['delivery_landmark']); ?></dd></div>
+                    <?php endif; ?>
+                    <div>
+                        <dt>Rider</dt>
+                        <dd>
+                            <?php if ($riderName !== ''): ?>
+                                <?php echo htmlspecialchars($riderName); ?>
+                                <?php if (!empty($o['rider_phone'])): ?>
+                                    <a class="order-detail-link" href="tel:<?php echo htmlspecialchars($o['rider_phone']); ?>"><i class="fa-solid fa-phone"></i> Call</a>
+                                <?php endif; ?>
+                            <?php else: ?>
+                                <span class="order-detail-muted">Not assigned yet</span>
+                            <?php endif; ?>
+                        </dd>
+                    </div>
+                <?php endif; ?>
+                <?php if (!empty($o['delivery_notes'])): ?>
+                    <div class="is-wide"><dt>Delivery instructions</dt><dd><?php echo nl2br(htmlspecialchars($o['delivery_notes'])); ?></dd></div>
+                <?php endif; ?>
+                <?php if (!empty($o['notes'])): ?>
+                    <div class="is-wide"><dt>Order notes</dt><dd><?php echo nl2br(htmlspecialchars($o['notes'])); ?></dd></div>
+                <?php endif; ?>
+            </dl>
+        </section>
+    </div>
+
+    <section class="order-detail-card">
+        <h4 class="order-detail-card-title"><i class="fa-solid fa-basket-shopping"></i> Items <span class="order-detail-count"><?php echo count($dItems); ?> line<?php echo count($dItems) === 1 ? '' : 's'; ?></span></h4>
+        <div class="table-wrap" style="overflow-x: auto; border-radius: 10px; border: 1px solid var(--admin-line);">
+            <table class="orders-table order-detail-items">
+                <thead>
+                    <tr>
+                        <th>Item</th>
+                        <th>Service Size</th>
+                        <th>SKU</th>
+                        <th style="text-align: right;">Unit Price</th>
+                        <th style="text-align: center;">Qty</th>
+                        <th style="text-align: right;">Line Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($dItems as $it): ?>
+                        <tr>
+                            <td><strong><?php echo htmlspecialchars($it['product_name']); ?></strong></td>
+                            <td><?php echo htmlspecialchars($it['service_size']); ?></td>
+                            <td class="order-detail-mono"><?php echo htmlspecialchars($it['sku']); ?></td>
+                            <td style="text-align: right;">₱<?php echo number_format((float) $it['unit_price'], 2); ?></td>
+                            <td style="text-align: center;"><?php echo (int) $it['quantity']; ?></td>
+                            <td style="text-align: right;"><strong>₱<?php echo number_format((float) $it['line_total'], 2); ?></strong></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <?php if (!$dItems): ?>
+                        <tr><td colspan="6" style="text-align: center; color: var(--admin-muted);">No line items recorded for this order.</td></tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="order-detail-totals">
+            <div><span>Subtotal</span><strong>₱<?php echo number_format((float) $o['subtotal'], 2); ?></strong></div>
+            <?php if ((float) $o['vat_amount'] > 0): ?>
+                <div><span>VAT (12%)</span><strong>₱<?php echo number_format((float) $o['vat_amount'], 2); ?></strong></div>
+            <?php endif; ?>
+            <?php if ((float) $o['vat_exempt_sales'] > 0): ?>
+                <div><span>VAT-exempt sales</span><strong>₱<?php echo number_format((float) $o['vat_exempt_sales'], 2); ?></strong></div>
+            <?php endif; ?>
+            <?php if ((float) $o['discount_amount'] > 0): ?>
+                <div class="is-discount"><span><?php echo $o['discount_type'] === 'pwd' ? 'PWD' : 'Senior'; ?> discount</span><strong>−₱<?php echo number_format((float) $o['discount_amount'], 2); ?></strong></div>
+            <?php endif; ?>
+            <?php if (!empty($o['voucher_code'])): ?>
+                <div class="is-discount">
+                    <span><i class="fa-solid fa-ticket"></i> Voucher · <?php echo htmlspecialchars($o['voucher_code']); ?></span>
+                    <strong><?php echo (float) ($o['voucher_discount'] ?? 0) > 0 ? '−₱' . number_format((float) $o['voucher_discount'], 2) : 'Free Delivery'; ?></strong>
+                </div>
+            <?php endif; ?>
+            <?php if ((float) $o['delivery_fee'] > 0): ?>
+                <div><span>Delivery fee</span><strong>₱<?php echo number_format((float) $o['delivery_fee'], 2); ?></strong></div>
+            <?php endif; ?>
+            <div class="is-total"><span>Total</span><strong>₱<?php echo number_format($orderTotal, 2); ?></strong></div>
+        </div>
+    </section>
+
+    <div class="order-detail-grid">
+        <section class="order-detail-card">
+            <h4 class="order-detail-card-title"><i class="fa-solid fa-receipt"></i> Payment</h4>
+            <dl class="order-detail-fields">
+                <div>
+                    <dt>Method</dt>
+                    <dd><span class="order-detail-tag <?php echo $isCash ? 'is-cash' : 'is-online'; ?>"><i class="fa-solid <?php echo $isCash ? 'fa-money-bill-wave' : 'fa-mobile-screen'; ?>"></i> <?php echo htmlspecialchars($payLabel); ?></span></dd>
+                </div>
+                <div>
+                    <dt>Payment status</dt>
+                    <dd>
+                        <?php if ($payStatus === 'paid'): ?>
+                            <span class="status-chip is-paid"><i class="fa-solid fa-circle-check"></i> Paid</span>
+                        <?php elseif (in_array($payStatus, ['failed', 'expired', 'voided'], true)): ?>
+                            <span class="status-chip is-failed"><i class="fa-solid fa-circle-xmark"></i> <?php echo ucfirst($payStatus); ?></span>
+                        <?php else: ?>
+                            <span class="status-chip is-pending"><i class="fa-solid fa-clock"></i> Pending</span>
+                        <?php endif; ?>
+                    </dd>
+                </div>
+                <?php if (!empty($o['amount'])): ?>
+                    <div><dt>Amount paid</dt><dd>₱<?php echo number_format((float) $o['amount'], 2); ?><?php echo !empty($o['payment_created_at']) ? ' <small class="order-detail-note">' . date('M d, Y g:i A', strtotime($o['payment_created_at'])) . '</small>' : ''; ?></dd></div>
+                <?php endif; ?>
+                <?php if (!empty($o['payment_channel'])): ?>
+                    <div><dt>Channel</dt><dd><?php echo htmlspecialchars(str_replace('_', ' ', strtoupper($o['payment_channel']))); ?></dd></div>
+                <?php endif; ?>
+                <?php if (!empty($o['payment_reference'])): ?>
+                    <div class="is-wide"><dt>Payment reference</dt><dd class="order-detail-mono"><?php echo htmlspecialchars($o['payment_reference']); ?></dd></div>
+                <?php endif; ?>
+                <?php if ($isCash && (float) ($o['cash_amount'] ?? 0) > 0): ?>
+                    <div><dt>Customer will hand over</dt><dd>₱<?php echo number_format((float) $o['cash_amount'], 2); ?></dd></div>
+                    <div><dt>Change to return</dt><dd>₱<?php echo number_format(max(0, (float) $o['cash_amount'] - $orderTotal), 2); ?></dd></div>
+                <?php endif; ?>
+                <?php if ($o['collected_amount'] !== null): ?>
+                    <div><dt>Cash collected</dt><dd>₱<?php echo number_format((float) $o['collected_amount'], 2); ?><?php echo $o['collected_at'] ? ' <small class="order-detail-note">' . date('M d, g:i A', strtotime($o['collected_at'])) . '</small>' : ''; ?></dd></div>
+                <?php endif; ?>
+                <?php if (!empty($o['proof_captured_at'])): ?>
+                    <div>
+                        <dt>Delivery proof</dt>
+                        <dd>
+                            <a class="order-detail-link" href="<?php echo htmlspecialchars($proofUrl); ?>" target="_blank" rel="noopener"><i class="fa-solid fa-image"></i> View photo</a>
+                            <small class="order-detail-note"><?php echo date('M d, Y g:i A', strtotime($o['proof_captured_at'])); ?></small>
+                        </dd>
+                    </div>
+                <?php endif; ?>
+                <?php if (!empty($o['proof_note'])): ?>
+                    <div class="is-wide"><dt>Handover note</dt><dd><?php echo htmlspecialchars($o['proof_note']); ?></dd></div>
+                <?php endif; ?>
+            </dl>
+        </section>
+
+        <section class="order-detail-card">
+            <h4 class="order-detail-card-title"><i class="fa-solid fa-timeline"></i> Activity Trail</h4>
+            <ol class="order-detail-trail">
+                <?php foreach (array_reverse($trail) as $entry): ?>
+                    <li>
+                        <span class="order-detail-trail-dot"><i class="fa-solid fa-<?php echo htmlspecialchars(orderHistoryIcon((string) $entry['to_status'], $entry['from_status'])); ?>"></i></span>
+                        <div>
+                            <strong><?php echo htmlspecialchars(orderHistoryLabel((string) $entry['to_status'], $entry['from_status'], $fulfillment)); ?></strong>
+                            <?php if (!empty($entry['note'])): ?>
+                                <p><?php echo htmlspecialchars($entry['note']); ?></p>
+                            <?php endif; ?>
+                            <small>
+                                <?php echo htmlspecialchars($entry['actor_name'] ?: 'System'); ?>
+                                <em><?php echo htmlspecialchars(orderActorRoleLabel($entry['actor_role'])); ?></em>
+                                · <?php echo date('M d, Y g:i A', strtotime($entry['created_at'])); ?>
+                            </small>
+                        </div>
+                    </li>
+                <?php endforeach; ?>
+                <?php if (!$trail): ?>
+                    <li><span class="order-detail-trail-dot"><i class="fa-solid fa-receipt"></i></span><div><strong>No activity recorded yet.</strong></div></li>
+                <?php endif; ?>
+            </ol>
+        </section>
+    </div>
+
+    <div class="modal-actions">
+        <button class="admin-button secondary" type="button" data-close-modal>Close</button>
+    </div>
+</div>
+<?php endforeach; ?>
+<div class="modal-backdrop" data-modal-backdrop></div>
+<?php endif; ?>
 
 <?php require __DIR__ . '/../includes/admin_footer.php'; ?>

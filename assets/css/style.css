@@ -3392,6 +3392,10 @@ button.bs-order {
 }
 
 @media (max-width: 760px) {
+    /* Re-declared here (after the 1000px block above) so it wins: on phones the
+       cart must be a single column — the 1000px rule would otherwise keep two
+       tracks and crush the item list to ~140px. */
+    .cart-layout { grid-template-columns: 1fr; }
     .cart-summary { position: static; }
     .shop-banner-inner { gap: 1.4rem; }
     .shop-category-grid { grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); }
@@ -4395,7 +4399,9 @@ button.bs-order {
 @media (max-width: 760px) {
     .moments-bar { flex-direction: column; align-items: stretch; }
     .moments-tabs { justify-content: center; }
-    .moments-search { max-width: none; }
+    /* The bar stacks vertically here, so `flex: 1 1 240px` would turn 240px
+       into a HEIGHT and balloon the search field. Size it to its content. */
+    .moments-search { flex: 0 0 auto; max-width: none; width: 100%; }
     .moment-insight-grid { grid-template-columns: repeat(2, 1fr); }
     .moment-insight-row { flex-wrap: wrap; }
     .moment-insight-stats { width: 100%; justify-content: flex-end; padding-left: calc(54px + .9rem); }

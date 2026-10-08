@@ -163,7 +163,7 @@ require __DIR__ . '/../includes/admin_header.php';
     </article>
 </section>
 
-<section class="panel">
+<section class="panel reviews-panel">
     <div class="panel-heading">
         <div>
             <h3>All Reviews</h3>
